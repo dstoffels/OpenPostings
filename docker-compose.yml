@@ -1,0 +1,73 @@
+services:
+  api:
+    build: .
+    image: openpostings-api:local
+    container_name: openpostings-api
+    restart: unless-stopped
+    # Not published to the host — only `proxy` talks to this, over the
+    # compose network, at api:8787.
+    expose:
+      - "8787"
+    environment:
+      - PORT=8787
+    # jobs.db is checked into the repo, so a fresh clone already has it at
+    # the project root — bind-mounted here in place (not copied) so the
+    # container reads/writes the same file your normal `npm run server`
+    # would. Don't run both at the same time; two processes writing the
+    # same SQLite file will fight each other.
+    volumes:
+      - ./jobs.db:/app/jobs.db
+      - ./jobs.db-wal:/app/jobs.db-wal
+      - ./jobs.db-shm:/app/jobs.db-shm
+      - ./logs:/app/logs
+
+  mcp:
+    build: .
+    image: openpostings-mcp:local
+    container_name: openpostings-mcp
+    restart: unless-stopped
+    # Same image as `api`, different entry point.
+    command: ["node", "server/mcp-apply-server.js"]
+    # Not published to the host — only `proxy` talks to this, over the
+    # compose network, at mcp:8788.
+    expose:
+      - "8788"
+    environment:
+      - MCP_PORT=8788
+      # Must bind all interfaces inside the container, not just 127.0.0.1
+      # (the app's local-testing default), or `proxy` can't reach it.
+      - MCP_HOST=0.0.0.0
+      # Required — the app itself refuses to start without this (it holds
+      # PII and can submit job applications). Set it in a .env file next to
+      # this compose file; there's no default.
+      - MCP_AUTH_TOKEN=${MCP_AUTH_TOKEN:?Set MCP_AUTH_TOKEN in a .env file before starting}
+    volumes:
+      - ./jobs.db:/app/jobs.db
+      - ./jobs.db-wal:/app/jobs.db-wal
+      - ./jobs.db-shm:/app/jobs.db-shm
+      - ./logs:/app/logs
+
+  proxy:
+    build:
+      context: .
+      dockerfile: Dockerfile.proxy
+    image: openpostings-proxy:local
+    container_name: openpostings-proxy
+    restart: unless-stopped
+    depends_on:
+      - api
+      - mcp
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      # Set SITE_ADDRESS to your real domain in a .env file next to this
+      # compose file for production HTTPS; defaults to plain HTTP on :80.
+      - SITE_ADDRESS=${SITE_ADDRESS:-:80}
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:

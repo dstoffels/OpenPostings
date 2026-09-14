@@ -1,301 +1,309 @@
-const path = require("path");
-const { open } = require("sqlite");
-const sqlite3 = require("sqlite3");
-const { McpServer } = require("@modelcontextprotocol/sdk/server/mcp.js");
-const { StdioServerTransport } = require("@modelcontextprotocol/sdk/server/stdio.js");
-const z = require("zod");
+const crypto = require('crypto');
+const path = require('path');
+const { open } = require('sqlite');
+const sqlite3 = require('sqlite3');
+const { McpServer } = require('@modelcontextprotocol/sdk/server/mcp.js');
+const { StreamableHTTPServerTransport } = require('@modelcontextprotocol/sdk/server/streamableHttp.js');
+const { createMcpExpressApp } = require('@modelcontextprotocol/sdk/server/express.js');
+const z = require('zod');
 
-const ROOT_DIR = path.resolve(__dirname, "..", "..");
-const DB_PATH = process.env.DB_PATH || path.resolve(__dirname, "..", "jobs.db");
+const ROOT_DIR = path.resolve(__dirname, '..', '..');
+const DB_PATH = process.env.DB_PATH || path.resolve(__dirname, '..', 'jobs.db');
+// Not exposed to the compose network yet — that's a later step. For now this
+// only needs to be reachable from the same machine for local testing.
+const MCP_PORT = Number(process.env.MCP_PORT || 8788);
+const MCP_HOST = process.env.MCP_HOST || '127.0.0.1';
+const MCP_AUTH_TOKEN = String(process.env.MCP_AUTH_TOKEN || '').trim();
 
 const GENERIC_TITLE_LIKE_PARTS = new Set([
-  "and",
-  "for",
-  "with",
-  "from",
-  "the",
-  "manager",
-  "assistant",
-  "associate",
-  "specialist",
-  "coordinator",
-  "director",
-  "officer",
-  "analyst",
-  "consultant",
-  "lead",
-  "senior",
-  "junior",
-  "staff",
-  "team",
-  "services",
-  "service",
-  "operations",
-  "operation",
-  "support"
+	'and',
+	'for',
+	'with',
+	'from',
+	'the',
+	'manager',
+	'assistant',
+	'associate',
+	'specialist',
+	'coordinator',
+	'director',
+	'officer',
+	'analyst',
+	'consultant',
+	'lead',
+	'senior',
+	'junior',
+	'staff',
+	'team',
+	'services',
+	'service',
+	'operations',
+	'operation',
+	'support',
 ]);
 const WEAK_INDUSTRY_LIKE_PARTS = new Set([
-  ...GENERIC_TITLE_LIKE_PARTS,
-  "account",
-  "accounts",
-  "representative",
-  "executive",
-  "management",
-  "area",
-  "group",
-  "international",
-  "care",
-  "inside",
-  "outside",
-  "hourly",
-  "commission",
-  "anywhere",
-  "can",
-  "small",
-  "planning",
-  "compliance",
-  "core",
-  "safety",
-  "import",
-  "export",
-  "brand",
-  "ambassador",
-  "customer",
-  "business",
-  "field",
-  "division",
-  "product"
+	...GENERIC_TITLE_LIKE_PARTS,
+	'account',
+	'accounts',
+	'representative',
+	'executive',
+	'management',
+	'area',
+	'group',
+	'international',
+	'care',
+	'inside',
+	'outside',
+	'hourly',
+	'commission',
+	'anywhere',
+	'can',
+	'small',
+	'planning',
+	'compliance',
+	'core',
+	'safety',
+	'import',
+	'export',
+	'brand',
+	'ambassador',
+	'customer',
+	'business',
+	'field',
+	'division',
+	'product',
 ]);
-const IT_SOFTWARE_INDUSTRY_KEY = "information_technology_software";
-const SALES_BUSINESS_INDUSTRY_KEY = "sales_business_development";
+const IT_SOFTWARE_INDUSTRY_KEY = 'information_technology_software';
+const SALES_BUSINESS_INDUSTRY_KEY = 'sales_business_development';
 const IT_TECH_ANCHOR_PARTS = new Set([
-  "software",
-  "developer",
-  "development",
-  "engineer",
-  "engineering",
-  "devops",
-  "platform",
-  "cloud",
-  "security",
-  "cybersecurity",
-  "cyber",
-  "infrastructure",
-  "network",
-  "systems",
-  "system",
-  "administrator",
-  "database",
-  "sql",
-  "data",
-  "analytics",
-  "architect",
-  "automation",
-  "backend",
-  "frontend",
-  "fullstack",
-  "application",
-  "applications",
-  "qa",
-  "test",
-  "testing",
-  "machine",
-  "learning",
-  "mlops",
-  "ai"
+	'software',
+	'developer',
+	'development',
+	'engineer',
+	'engineering',
+	'devops',
+	'platform',
+	'cloud',
+	'security',
+	'cybersecurity',
+	'cyber',
+	'infrastructure',
+	'network',
+	'systems',
+	'system',
+	'administrator',
+	'database',
+	'sql',
+	'data',
+	'analytics',
+	'architect',
+	'automation',
+	'backend',
+	'frontend',
+	'fullstack',
+	'application',
+	'applications',
+	'qa',
+	'test',
+	'testing',
+	'machine',
+	'learning',
+	'mlops',
+	'ai',
 ]);
 const IT_HIGH_SIGNAL_ANCHOR_PARTS = new Set([
-  "software",
-  "developer",
-  "development",
-  "engineer",
-  "engineering",
-  "devops",
-  "platform",
-  "cloud",
-  "security",
-  "cybersecurity",
-  "cyber",
-  "infrastructure",
-  "network",
-  "systems",
-  "system",
-  "administrator",
-  "database",
-  "sql",
-  "architect",
-  "automation",
-  "backend",
-  "frontend",
-  "fullstack",
-  "mlops",
-  "machine",
-  "learning",
-  "ai"
+	'software',
+	'developer',
+	'development',
+	'engineer',
+	'engineering',
+	'devops',
+	'platform',
+	'cloud',
+	'security',
+	'cybersecurity',
+	'cyber',
+	'infrastructure',
+	'network',
+	'systems',
+	'system',
+	'administrator',
+	'database',
+	'sql',
+	'architect',
+	'automation',
+	'backend',
+	'frontend',
+	'fullstack',
+	'mlops',
+	'machine',
+	'learning',
+	'ai',
 ]);
 const IT_SALES_GTM_ROLE_REGEX =
-  /\b(account executive|account manager|business development|brand ambassador|go[\s-]?to[\s-]?market|gtm|inside sales|outside sales|sales representative|territory manager|partnerships?|sales(?!force\b))\b/i;
+	/\b(account executive|account manager|business development|brand ambassador|go[\s-]?to[\s-]?market|gtm|inside sales|outside sales|sales representative|territory manager|partnerships?|sales(?!force\b))\b/i;
 const SALES_EXCLUSIVE_ROLE_REGEX =
-  /\b(account executive|account manager|business development|brand ambassador|inside sales|outside sales|sales representative|sales manager|sales director|sales consultant|sales specialist|sales associate|sales advisor|presales?|telesales|territory manager|channel sales|partner sales|salesperson|salesman|salesworker|sales(?!force\b))\b/i;
+	/\b(account executive|account manager|business development|brand ambassador|inside sales|outside sales|sales representative|sales manager|sales director|sales consultant|sales specialist|sales associate|sales advisor|presales?|telesales|territory manager|channel sales|partner sales|salesperson|salesman|salesworker|sales(?!force\b))\b/i;
 
 const STATE_CODE_TO_NAME = {
-  AL: "alabama",
-  AK: "alaska",
-  AZ: "arizona",
-  AR: "arkansas",
-  CA: "california",
-  CO: "colorado",
-  CT: "connecticut",
-  DE: "delaware",
-  FL: "florida",
-  GA: "georgia",
-  HI: "hawaii",
-  ID: "idaho",
-  IL: "illinois",
-  IN: "indiana",
-  IA: "iowa",
-  KS: "kansas",
-  KY: "kentucky",
-  LA: "louisiana",
-  ME: "maine",
-  MD: "maryland",
-  MA: "massachusetts",
-  MI: "michigan",
-  MN: "minnesota",
-  MS: "mississippi",
-  MO: "missouri",
-  MT: "montana",
-  NE: "nebraska",
-  NV: "nevada",
-  NH: "new hampshire",
-  NJ: "new jersey",
-  NM: "new mexico",
-  NY: "new york",
-  NC: "north carolina",
-  ND: "north dakota",
-  OH: "ohio",
-  OK: "oklahoma",
-  OR: "oregon",
-  PA: "pennsylvania",
-  RI: "rhode island",
-  SC: "south carolina",
-  SD: "south dakota",
-  TN: "tennessee",
-  TX: "texas",
-  UT: "utah",
-  VT: "vermont",
-  VA: "virginia",
-  WA: "washington",
-  WV: "west virginia",
-  WI: "wisconsin",
-  WY: "wyoming",
-  DC: "district of columbia"
+	AL: 'alabama',
+	AK: 'alaska',
+	AZ: 'arizona',
+	AR: 'arkansas',
+	CA: 'california',
+	CO: 'colorado',
+	CT: 'connecticut',
+	DE: 'delaware',
+	FL: 'florida',
+	GA: 'georgia',
+	HI: 'hawaii',
+	ID: 'idaho',
+	IL: 'illinois',
+	IN: 'indiana',
+	IA: 'iowa',
+	KS: 'kansas',
+	KY: 'kentucky',
+	LA: 'louisiana',
+	ME: 'maine',
+	MD: 'maryland',
+	MA: 'massachusetts',
+	MI: 'michigan',
+	MN: 'minnesota',
+	MS: 'mississippi',
+	MO: 'missouri',
+	MT: 'montana',
+	NE: 'nebraska',
+	NV: 'nevada',
+	NH: 'new hampshire',
+	NJ: 'new jersey',
+	NM: 'new mexico',
+	NY: 'new york',
+	NC: 'north carolina',
+	ND: 'north dakota',
+	OH: 'ohio',
+	OK: 'oklahoma',
+	OR: 'oregon',
+	PA: 'pennsylvania',
+	RI: 'rhode island',
+	SC: 'south carolina',
+	SD: 'south dakota',
+	TN: 'tennessee',
+	TX: 'texas',
+	UT: 'utah',
+	VT: 'vermont',
+	VA: 'virginia',
+	WA: 'washington',
+	WV: 'west virginia',
+	WI: 'wisconsin',
+	WY: 'wyoming',
+	DC: 'district of columbia',
 };
 
 const MCP_SETTINGS_DEFAULTS = {
-  enabled: false,
-  preferred_agent_name: "OpenPostings Agent",
-  agent_login_email: "",
-  agent_login_password: "",
-  mfa_login_email: "",
-  mfa_login_notes: "",
-  dry_run_only: true,
-  require_final_approval: true,
-  max_applications_per_run: 10,
-  preferred_search: "",
-  preferred_remote: "all",
-  preferred_industries: [],
-  preferred_states: [],
-  preferred_counties: [],
-  instructions_for_agent: ""
+	enabled: false,
+	preferred_agent_name: 'OpenPostings Agent',
+	agent_login_email: '',
+	agent_login_password: '',
+	mfa_login_email: '',
+	mfa_login_notes: '',
+	dry_run_only: true,
+	require_final_approval: true,
+	max_applications_per_run: 10,
+	preferred_search: '',
+	preferred_remote: 'all',
+	preferred_industries: [],
+	preferred_countries: [],
+	preferred_states: [],
+	preferred_counties: [],
+	instructions_for_agent: '',
 };
 const ATS_FILTER_OPTIONS = new Set([
-  "adp_myjobs",
-  "paycor",
-  "paycomonline",
-  "prismhr",
-  "silkroad",
-  "adp_workforcenow",
-  "applitrack",
-  "applicantai",
-  "applicantpro",
-  "applytojob",
-  "ashby",
-  "bamboohr",
-  "brassring",
-  "breezy",
-  "careerplug",
-  "careerpuck",
-  "careerspage",
-  "dayforcehcm",
-  "eightfold",
-  "fountain",
-  "freshteam",
-  "agilehr",
-  "avature",
-  "comeet",
-  "factorialhr",
-  "hireology",
-  "hiringplatform",
-  "homerun",
-  "jibeapply",
-  "jobs2web",
-  "occupop",
-  "peopleadmin",
-  "personio",
-  "recruiterflow",
-  "softgarden",
-  "trakstar",
-  "ycombinator",
-  "yello",
-  "crelate",
-  "gem",
-  "getro",
-  "governmentjobs",
-  "smartrecruiters",
-  "policeapp",
-  "usajobs",
-  "k12jobspot",
-  "schoolspring",
-  "calcareers",
-  "calopps",
-  "statejobsny",
-  "edjoin",
-  "webcruiter",
-  "academicjobsonline",
-  "hibob",
-  "isolved",
-  "greenhouse",
-  "hirebridge",
-  "hrmdirect",
-  "icims",
-  "jobaps",
-  "jobvite",
-  "join",
-  "lever",
-  "loxo",
-  "manatal",
-  "oracle",
-  "pageup",
-  "paylocity",
-  "peopleforce",
-  "pinpointhq",
-  "recruitcrm",
-  "recruitee",
-  "rippling",
-  "sagehr",
-  "saphrcloud",
-  "simplicant",
-  "talentlyft",
-  "talentreef",
-  "taleo",
-  "talexio",
-  "teamtailor",
-  "theapplicantmanager",
-  "ukg",
-  "ultipro",
-  "workday",
-  "zoho"
+	'adp_myjobs',
+	'paycor',
+	'paycomonline',
+	'prismhr',
+	'silkroad',
+	'adp_workforcenow',
+	'applitrack',
+	'applicantai',
+	'applicantpro',
+	'applytojob',
+	'ashby',
+	'bamboohr',
+	'brassring',
+	'breezy',
+	'careerplug',
+	'careerpuck',
+	'careerspage',
+	'dayforcehcm',
+	'eightfold',
+	'fountain',
+	'freshteam',
+	'agilehr',
+	'avature',
+	'comeet',
+	'factorialhr',
+	'hireology',
+	'hiringplatform',
+	'homerun',
+	'jibeapply',
+	'jobs2web',
+	'occupop',
+	'peopleadmin',
+	'personio',
+	'recruiterflow',
+	'softgarden',
+	'trakstar',
+	'ycombinator',
+	'yello',
+	'crelate',
+	'gem',
+	'getro',
+	'governmentjobs',
+	'smartrecruiters',
+	'policeapp',
+	'usajobs',
+	'k12jobspot',
+	'schoolspring',
+	'calcareers',
+	'calopps',
+	'statejobsny',
+	'edjoin',
+	'webcruiter',
+	'academicjobsonline',
+	'hibob',
+	'isolved',
+	'greenhouse',
+	'hirebridge',
+	'hrmdirect',
+	'icims',
+	'jobaps',
+	'jobvite',
+	'join',
+	'lever',
+	'loxo',
+	'manatal',
+	'oracle',
+	'pageup',
+	'paylocity',
+	'peopleforce',
+	'pinpointhq',
+	'recruitcrm',
+	'recruitee',
+	'rippling',
+	'sagehr',
+	'saphrcloud',
+	'simplicant',
+	'talentlyft',
+	'talentreef',
+	'taleo',
+	'talexio',
+	'teamtailor',
+	'theapplicantmanager',
+	'ukg',
+	'ultipro',
+	'workday',
+	'zoho',
 ]);
 const MCP_ATS_FILTER_VALUES = Object.freeze(Array.from(ATS_FILTER_OPTIONS));
 const PHRASE_NGRAM_INDUSTRY_COVERAGE_THRESHOLD = 2;
@@ -308,607 +316,857 @@ let wordIndustryCoverageCache = null;
 let phraseNgramIndustryCoverageCache = null;
 
 function nowEpochSeconds() {
-  return Math.floor(Date.now() / 1000);
+	return Math.floor(Date.now() / 1000);
 }
 
 function normalizeLikeText(value) {
-  return String(value || "")
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, " ");
+	return String(value || '')
+		.trim()
+		.toLowerCase()
+		.replace(/\s+/g, ' ');
 }
 
 function parseNonNegativeInteger(value) {
-  const parsed = Number.parseInt(String(value ?? "").trim(), 10);
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+	const parsed = Number.parseInt(String(value ?? '').trim(), 10);
+	return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
 }
 
 function normalizeBoolean(value, defaultValue = false) {
-  if (typeof value === "boolean") return value;
-  const normalized = normalizeLikeText(value);
-  if (!normalized) return Boolean(defaultValue);
-  return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
+	if (typeof value === 'boolean') return value;
+	const normalized = normalizeLikeText(value);
+	if (!normalized) return Boolean(defaultValue);
+	return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on';
 }
 
 function normalizeRemoteFilter(value) {
-  const normalized = normalizeLikeText(value);
-  if (normalized === "remote" || normalized === "hybrid" || normalized === "non_remote") return normalized;
-  return "all";
+	const normalized = normalizeLikeText(value);
+	if (normalized === 'remote' || normalized === 'hybrid' || normalized === 'non_remote')
+		return normalized;
+	return 'all';
 }
 
 function ensureMcpAgentEnabled(settings) {
-  if (normalizeBoolean(settings?.enabled, false)) return;
-  throw new Error("MCP application agent is disabled in settings.");
+	if (normalizeBoolean(settings?.enabled, false)) return;
+	throw new Error('MCP application agent is disabled in settings.');
 }
 
 function inferAtsFromJobPostingUrl(value) {
-  const url = String(value || "").trim().toLowerCase();
-  if (!url) return "";
-  if (url.includes("myworkdayjobs.com")) return "workday";
-  if (url.includes("jobs.ashbyhq.com")) return "ashby";
-  if (url.includes("job-boards.greenhouse.io") || url.includes("boards.greenhouse.io")) return "greenhouse";
-  if (url.includes("jobs.lever.co")) return "lever";
-  if ((url.includes("jobs.jobvite.com/") || url.includes("careers.jobvite.com/")) && url.includes("/job/")) return "jobvite";
-  if (url.includes(".applicantpro.com/jobs")) return "applicantpro";
-  if (url.includes(".applitrack.com/") && (url.includes("/onlineapp/default.aspx") || url.includes("/jobpostings/output.asp") || url.includes("/default.aspx?jobid="))) {
-    return "applitrack";
-  }
-  if (url.includes(".careers.hibob.com/job/")) return "hibob";
-  if (url.includes(".hiringplatform.com/") && /\/\d+\/(?:en|fr)(?:\?|$)/.test(url)) return "hiringplatform";
-  if (url.includes(".homerun.co/")) return "homerun";
-  if (url.includes(".jibeapply.com/")) return "jibeapply";
-  if (url.includes(".jobs2web.com/job/")) return "jobs2web";
-  if (url.includes(".occupop-careers.com/job/")) return "occupop";
-  if (url.includes(".peopleadmin.com/postings/")) return "peopleadmin";
-  if (url.includes(".jobs.personio.com/job/")) return "personio";
-  if (/recruiterflow\.com\/[^/]+\/jobs\/\d+/.test(url)) return "recruiterflow";
-  if (url.includes(".softgarden.io/job/")) return "softgarden";
-  if (url.includes(".hire.trakstar.com/jobs/")) return "trakstar";
-  if (url.includes(".recruiterbox.com/jobs/")) return "trakstar";
-  if (url.includes(".trakstarhire.com/jobs/")) return "trakstar";
-  if (url.includes("ycombinator.com/companies/") && url.includes("/jobs")) return "ycombinator";
-  if (url.includes(".yello.co/jobs/")) return "yello";
-  if (url.includes(".isolvedhire.com/jobs/")) return "isolved";
-  if (url.includes("/careers/jobdetail/")) return "avature";
-  if (url.includes("www.comeet.com/jobs/") || url.includes("comeet.com/jobs/")) return "comeet";
-  if (url.includes(".applytojob.com/apply")) return "applytojob";
-  if (url.includes(".icims.com/jobs/")) return "icims";
-  if (url.includes("theapplicantmanager.com/jobs")) return "theapplicantmanager";
-  if (url.includes(".breezy.hr/p/")) return "breezy";
-  if (url.includes(".zohorecruit.com/jobs/careers")) return "zoho";
-  if (url.includes("applicantai.com/")) return "applicantai";
-  if (url.includes(".bamboohr.com/careers")) return "bamboohr";
-  if (url.includes("app.careerpuck.com/job-board/")) return "careerpuck";
-  if (url.includes("dayforcehcm.com/candidateportal/")) return "dayforcehcm";
-  if (url.includes("careers.dayforcehcm.com/")) return "dayforcehcm";
-  if (url.includes("web.fountain.com/c/")) return "fountain";
-  if (url.includes(".getro.com/jobs")) return "getro";
-  if (url.includes("governmentjobs.com/jobs/")) return "governmentjobs";
-  if (url.includes("jobs.smartrecruiters.com/")) return "smartrecruiters";
-  if (url.includes("policeapp.com/") && /\/\d+\/?$/.test(url)) return "policeapp";
-  if (url.includes("usajobs.gov/job/")) return "usajobs";
-  if (url.includes("k12jobspot.com/job/detail/")) return "k12jobspot";
-  if (url.includes("schoolspring.com/job.cfm?jid=")) return "schoolspring";
-  if (url.includes("calcareers.ca.gov/calhrpublic/jobs/jobposting.aspx?jobcontrolid=")) return "calcareers";
-  if (url.includes("calopps.org/") && url.includes("/job-")) return "calopps";
-  if (url.includes("statejobsny.com/public/vacancydetailsview.cfm?id=")) return "statejobsny";
-  if (url.includes("edjoin.org/home/jobposting/")) return "edjoin";
-  if (url.includes(".webcruiter.no/main/recruit/public/")) return "webcruiter";
-  if (url.includes("candidate.webcruiter.com/en-gb/jobs/")) return "webcruiter";
-  if (url.includes("academicjobsonline.org/ajo/jobs/")) return "academicjobsonline";
-  if (url.includes(".hrmdirect.com/employment/job-opening.php")) return "hrmdirect";
-  if (url.includes(".talentlyft.com/jobs/")) return "talentlyft";
-  if (url.includes(".talexio.com/jobs")) return "talexio";
-  if (url.includes(".teamtailor.com/jobs/")) return "teamtailor";
-  if (url.endsWith(".teamtailor.com/jobs")) return "teamtailor";
-  if (url.includes(".freshteam.com/jobs/")) return "freshteam";
-  if (url.endsWith(".freshteam.com/jobs")) return "freshteam";
-  if (url.includes(".agilehr.com/application/login.aspx")) return "agilehr";
-  if (url.includes(".agilehr.com/careerportal/jobs.aspx")) return "agilehr";
-  if (url.includes("talent.sage.hr/jobs/")) return "sagehr";
-  if (url.includes("www.talent.sage.hr/jobs/")) return "sagehr";
-  if (url.includes("app.loxo.co/job/")) return "loxo";
-  if (url.includes(".peopleforce.io/careers/")) return "peopleforce";
-  if (url.endsWith(".peopleforce.io/careers")) return "peopleforce";
-  if (url.includes(".simplicant.com/jobs/")) return "simplicant";
-  if (url.includes(".pinpointhq.com/") && url.includes("/postings/")) return "pinpointhq";
-  if (url.includes("recruitcrm.io/jobs/")) return "recruitcrm";
-  if (url.includes("ats.rippling.com/") && url.includes("/jobs")) return "rippling";
-  if (url.includes(".careerplug.com/jobs/")) return "careerplug";
-  if (url.endsWith(".careerplug.com/jobs")) return "careerplug";
-  if (url.includes("jobs.gem.com/")) return "gem";
-  if (url.includes(".jobapscloud.com")) return "jobaps";
-  if (url.includes("join.com/companies/")) return "join";
-  if (url.includes("apply.jobappnetwork.com/apply/")) return "talentreef";
-  if (url.includes(".jobs.hr.cloud.sap/job/")) return "saphrcloud";
-  if (url.includes(".jobs.hr.cloud.sap/search/")) return "saphrcloud";
-  if (url.includes("myjobs.adp.com/") && url.includes("/cx/job-details")) return "adp_myjobs";
-  if (url.includes("recruitingbypaycor.com/career/jobintroduction.action")) return "paycor";
-  if (url.includes("paycomonline.net/v4/ats/web.php/jobs/viewjobdetails?job=")) return "paycomonline";
-  if (url.includes(".prismhr-hire.com/job/")) return "prismhr";
-  if (url.includes(".prismhr-hire.com")) return "prismhr";
-  if (url.includes("jobs.silkroad.com/") && url.includes("/careers/jobs/")) return "silkroad";
-  if (url.includes("www.jobs.silkroad.com/") && url.includes("/careers/jobs/")) return "silkroad";
-  if (url.includes("workforcenow.adp.com/mascsr/default/mdf/recruitment/recruitment.html")) return "adp_workforcenow";
-  if (url.includes("workforcenow.adp.com/jobs/apply/posting.html")) return "adp_workforcenow";
-  if (url.includes("careerspage.io/")) {
-    const parts = url.split("careerspage.io/")[1]?.split("/").filter(Boolean) || [];
-    if (parts.length >= 2) return "careerspage";
-  }
-  if (
-    url.includes(".oraclecloud.com/hcmui/candidateexperience/") &&
-    url.includes("/sites/") &&
-    (url.includes("/job/") || url.endsWith("/jobs") || url.includes("/jobs?"))
-  ) {
-    return "oracle";
-  }
-  if (url.includes("careers.pageuppeople.com/") && url.includes("/job/")) return "pageup";
-  if (url.includes("www.careers.pageuppeople.com/") && url.includes("/job/")) return "pageup";
-  if (url.includes("recruiting.paylocity.com/recruiting/jobs/details/")) return "paylocity";
-  if (
-    url.includes(".eightfold.ai/careers/job/") ||
-    url.includes(".eightfold.ai/careers/job?") ||
-    url.includes("eightfold.ai/careers/job/") ||
-    url.includes("eightfold.ai/careers/job?")
-  ) {
-    return "eightfold";
-  }
-  if (url.includes("recruit.hirebridge.com/v3/jobs/jobdetails.aspx")) return "hirebridge";
-  if (url.includes("recruit.hirebridge.com/v3/careercenter/v2/details.aspx")) return "hirebridge";
-  if (url.includes("sjobs.brassring.com/tgnewui/search/home/homewithpreload")) return "brassring";
-  if (url.includes(".careers-page.com/jobs/")) return "manatal";
-  if (url.includes(".careers-page.com/job/")) return "manatal";
-  if (url.includes("www.careers-page.com/") && (url.includes("/job/") || url.includes("/jobs/"))) return "manatal";
-  if (url.includes(".recruitee.com")) return "recruitee";
-  if (url.includes("recruiting.ultipro.com/") && url.includes("/jobboard/")) return "ultipro";
-  if (url.includes(".rec.pro.ukg.net/") && url.includes("/jobboard/")) return "ukg";
-  if (url.includes(".taleo.net/careersection/")) return "taleo";
-  return "";
+	const url = String(value || '')
+		.trim()
+		.toLowerCase();
+	if (!url) return '';
+	if (url.includes('myworkdayjobs.com')) return 'workday';
+	if (url.includes('jobs.ashbyhq.com')) return 'ashby';
+	if (url.includes('job-boards.greenhouse.io') || url.includes('boards.greenhouse.io'))
+		return 'greenhouse';
+	if (url.includes('jobs.lever.co')) return 'lever';
+	if (
+		(url.includes('jobs.jobvite.com/') || url.includes('careers.jobvite.com/')) &&
+		url.includes('/job/')
+	)
+		return 'jobvite';
+	if (url.includes('.applicantpro.com/jobs')) return 'applicantpro';
+	if (
+		url.includes('.applitrack.com/') &&
+		(url.includes('/onlineapp/default.aspx') ||
+			url.includes('/jobpostings/output.asp') ||
+			url.includes('/default.aspx?jobid='))
+	) {
+		return 'applitrack';
+	}
+	if (url.includes('.careers.hibob.com/job/')) return 'hibob';
+	if (url.includes('.hiringplatform.com/') && /\/\d+\/(?:en|fr)(?:\?|$)/.test(url))
+		return 'hiringplatform';
+	if (url.includes('.homerun.co/')) return 'homerun';
+	if (url.includes('.jibeapply.com/')) return 'jibeapply';
+	if (url.includes('.jobs2web.com/job/')) return 'jobs2web';
+	if (url.includes('.occupop-careers.com/job/')) return 'occupop';
+	if (url.includes('.peopleadmin.com/postings/')) return 'peopleadmin';
+	if (url.includes('.jobs.personio.com/job/')) return 'personio';
+	if (/recruiterflow\.com\/[^/]+\/jobs\/\d+/.test(url)) return 'recruiterflow';
+	if (url.includes('.softgarden.io/job/')) return 'softgarden';
+	if (url.includes('.hire.trakstar.com/jobs/')) return 'trakstar';
+	if (url.includes('.recruiterbox.com/jobs/')) return 'trakstar';
+	if (url.includes('.trakstarhire.com/jobs/')) return 'trakstar';
+	if (url.includes('ycombinator.com/companies/') && url.includes('/jobs')) return 'ycombinator';
+	if (url.includes('.yello.co/jobs/')) return 'yello';
+	if (url.includes('.isolvedhire.com/jobs/')) return 'isolved';
+	if (url.includes('/careers/jobdetail/')) return 'avature';
+	if (url.includes('www.comeet.com/jobs/') || url.includes('comeet.com/jobs/')) return 'comeet';
+	if (url.includes('.applytojob.com/apply')) return 'applytojob';
+	if (url.includes('.icims.com/jobs/')) return 'icims';
+	if (url.includes('theapplicantmanager.com/jobs')) return 'theapplicantmanager';
+	if (url.includes('.breezy.hr/p/')) return 'breezy';
+	if (url.includes('.zohorecruit.com/jobs/careers')) return 'zoho';
+	if (url.includes('applicantai.com/')) return 'applicantai';
+	if (url.includes('.bamboohr.com/careers')) return 'bamboohr';
+	if (url.includes('app.careerpuck.com/job-board/')) return 'careerpuck';
+	if (url.includes('dayforcehcm.com/candidateportal/')) return 'dayforcehcm';
+	if (url.includes('careers.dayforcehcm.com/')) return 'dayforcehcm';
+	if (url.includes('web.fountain.com/c/')) return 'fountain';
+	if (url.includes('.getro.com/jobs')) return 'getro';
+	if (url.includes('governmentjobs.com/jobs/')) return 'governmentjobs';
+	if (url.includes('jobs.smartrecruiters.com/')) return 'smartrecruiters';
+	if (url.includes('policeapp.com/') && /\/\d+\/?$/.test(url)) return 'policeapp';
+	if (url.includes('usajobs.gov/job/')) return 'usajobs';
+	if (url.includes('k12jobspot.com/job/detail/')) return 'k12jobspot';
+	if (url.includes('schoolspring.com/job.cfm?jid=')) return 'schoolspring';
+	if (url.includes('calcareers.ca.gov/calhrpublic/jobs/jobposting.aspx?jobcontrolid='))
+		return 'calcareers';
+	if (url.includes('calopps.org/') && url.includes('/job-')) return 'calopps';
+	if (url.includes('statejobsny.com/public/vacancydetailsview.cfm?id=')) return 'statejobsny';
+	if (url.includes('edjoin.org/home/jobposting/')) return 'edjoin';
+	if (url.includes('.webcruiter.no/main/recruit/public/')) return 'webcruiter';
+	if (url.includes('candidate.webcruiter.com/en-gb/jobs/')) return 'webcruiter';
+	if (url.includes('academicjobsonline.org/ajo/jobs/')) return 'academicjobsonline';
+	if (url.includes('.hrmdirect.com/employment/job-opening.php')) return 'hrmdirect';
+	if (url.includes('.talentlyft.com/jobs/')) return 'talentlyft';
+	if (url.includes('.talexio.com/jobs')) return 'talexio';
+	if (url.includes('.teamtailor.com/jobs/')) return 'teamtailor';
+	if (url.endsWith('.teamtailor.com/jobs')) return 'teamtailor';
+	if (url.includes('.freshteam.com/jobs/')) return 'freshteam';
+	if (url.endsWith('.freshteam.com/jobs')) return 'freshteam';
+	if (url.includes('.agilehr.com/application/login.aspx')) return 'agilehr';
+	if (url.includes('.agilehr.com/careerportal/jobs.aspx')) return 'agilehr';
+	if (url.includes('talent.sage.hr/jobs/')) return 'sagehr';
+	if (url.includes('www.talent.sage.hr/jobs/')) return 'sagehr';
+	if (url.includes('app.loxo.co/job/')) return 'loxo';
+	if (url.includes('.peopleforce.io/careers/')) return 'peopleforce';
+	if (url.endsWith('.peopleforce.io/careers')) return 'peopleforce';
+	if (url.includes('.simplicant.com/jobs/')) return 'simplicant';
+	if (url.includes('.pinpointhq.com/') && url.includes('/postings/')) return 'pinpointhq';
+	if (url.includes('recruitcrm.io/jobs/')) return 'recruitcrm';
+	if (url.includes('ats.rippling.com/') && url.includes('/jobs')) return 'rippling';
+	if (url.includes('.careerplug.com/jobs/')) return 'careerplug';
+	if (url.endsWith('.careerplug.com/jobs')) return 'careerplug';
+	if (url.includes('jobs.gem.com/')) return 'gem';
+	if (url.includes('.jobapscloud.com')) return 'jobaps';
+	if (url.includes('join.com/companies/')) return 'join';
+	if (url.includes('apply.jobappnetwork.com/apply/')) return 'talentreef';
+	if (url.includes('.jobs.hr.cloud.sap/job/')) return 'saphrcloud';
+	if (url.includes('.jobs.hr.cloud.sap/search/')) return 'saphrcloud';
+	if (url.includes('myjobs.adp.com/') && url.includes('/cx/job-details')) return 'adp_myjobs';
+	if (url.includes('recruitingbypaycor.com/career/jobintroduction.action')) return 'paycor';
+	if (url.includes('paycomonline.net/v4/ats/web.php/jobs/viewjobdetails?job='))
+		return 'paycomonline';
+	if (url.includes('.prismhr-hire.com/job/')) return 'prismhr';
+	if (url.includes('.prismhr-hire.com')) return 'prismhr';
+	if (url.includes('jobs.silkroad.com/') && url.includes('/careers/jobs/')) return 'silkroad';
+	if (url.includes('www.jobs.silkroad.com/') && url.includes('/careers/jobs/')) return 'silkroad';
+	if (url.includes('workforcenow.adp.com/mascsr/default/mdf/recruitment/recruitment.html'))
+		return 'adp_workforcenow';
+	if (url.includes('workforcenow.adp.com/jobs/apply/posting.html')) return 'adp_workforcenow';
+	if (url.includes('careerspage.io/')) {
+		const parts = url.split('careerspage.io/')[1]?.split('/').filter(Boolean) || [];
+		if (parts.length >= 2) return 'careerspage';
+	}
+	if (
+		url.includes('.oraclecloud.com/hcmui/candidateexperience/') &&
+		url.includes('/sites/') &&
+		(url.includes('/job/') || url.endsWith('/jobs') || url.includes('/jobs?'))
+	) {
+		return 'oracle';
+	}
+	if (url.includes('careers.pageuppeople.com/') && url.includes('/job/')) return 'pageup';
+	if (url.includes('www.careers.pageuppeople.com/') && url.includes('/job/')) return 'pageup';
+	if (url.includes('recruiting.paylocity.com/recruiting/jobs/details/')) return 'paylocity';
+	if (
+		url.includes('.eightfold.ai/careers/job/') ||
+		url.includes('.eightfold.ai/careers/job?') ||
+		url.includes('eightfold.ai/careers/job/') ||
+		url.includes('eightfold.ai/careers/job?')
+	) {
+		return 'eightfold';
+	}
+	if (url.includes('recruit.hirebridge.com/v3/jobs/jobdetails.aspx')) return 'hirebridge';
+	if (url.includes('recruit.hirebridge.com/v3/careercenter/v2/details.aspx')) return 'hirebridge';
+	if (url.includes('sjobs.brassring.com/tgnewui/search/home/homewithpreload')) return 'brassring';
+	if (url.includes('.careers-page.com/jobs/')) return 'manatal';
+	if (url.includes('.careers-page.com/job/')) return 'manatal';
+	if (url.includes('www.careers-page.com/') && (url.includes('/job/') || url.includes('/jobs/')))
+		return 'manatal';
+	if (url.includes('.recruitee.com')) return 'recruitee';
+	if (url.includes('recruiting.ultipro.com/') && url.includes('/jobboard/')) return 'ultipro';
+	if (url.includes('.rec.pro.ukg.net/') && url.includes('/jobboard/')) return 'ukg';
+	if (url.includes('.taleo.net/careersection/')) return 'taleo';
+	return '';
 }
 
 function normalizeAtsFilters(value) {
-  const rawItems = Array.isArray(value) ? value : value ? [value] : [];
-  const items = rawItems
-    .map((item) => {
-      const normalized = normalizeLikeText(item);
-      if (normalized === "ashbyhq") return "ashby";
-      if (normalized === "greenhouseio" || normalized === "greenhouse.io") return "greenhouse";
-      if (normalized === "leverco" || normalized === "lever.co") return "lever";
-      if (normalized === "dayforce" || normalized === "dayforcehcm" || normalized === "dayforcehcm.com") {
-        return "dayforcehcm";
-      }
-      if (normalized === "jobvitecom" || normalized === "jobvite.com") return "jobvite";
-      if (normalized === "applitrackcom" || normalized === "applitrack.com" || normalized === "applitrack") {
-        return "applitrack";
-      }
-      if (normalized === "hibob.com" || normalized === "hibobcom" || normalized === "hibob" || normalized === "careers.hibob.com" || normalized === "careershibobcom") {
-        return "hibob";
-      }
-      if (normalized === "hiringplatform" || normalized === "hiringplatform.com" || normalized === "hiringplatformcom") {
-        return "hiringplatform";
-      }
-      if (normalized === "homerun" || normalized === "homerun.co" || normalized === "homerunco") {
-        return "homerun";
-      }
-      if (normalized === "jibeapply" || normalized === "jibeapply.com" || normalized === "jibeapplycom") {
-        return "jibeapply";
-      }
-      if (normalized === "jobs2web" || normalized === "jobs2web.com" || normalized === "jobs2webcom") {
-        return "jobs2web";
-      }
-      if (
-        normalized === "occupop" ||
-        normalized === "occupop.com" ||
-        normalized === "occupopcom" ||
-        normalized === "occupop-careers.com" ||
-        normalized === "occupopcareerscom"
-      ) {
-        return "occupop";
-      }
-      if (
-        normalized === "peopleadmin" ||
-        normalized === "peopleadmin.com" ||
-        normalized === "peopleadmincom"
-      ) {
-        return "peopleadmin";
-      }
-      if (
-        normalized === "personio" ||
-        normalized === "personio.com" ||
-        normalized === "personiocom" ||
-        normalized === "jobs.personio.com" ||
-        normalized === "jobspersoniocom"
-      ) {
-        return "personio";
-      }
-      if (
-        normalized === "recruiterflow" ||
-        normalized === "recruiterflow.com" ||
-        normalized === "recruiterflowcom" ||
-        normalized === "www.recruiterflow.com" ||
-        normalized === "wwwrecruiterflowcom"
-      ) {
-        return "recruiterflow";
-      }
-      if (
-        normalized === "trakstar" ||
-        normalized === "hire.trakstar.com" ||
-        normalized === "hiretrakstarcom" ||
-        normalized === "recruiterbox.com" ||
-        normalized === "recruiterboxcom" ||
-        normalized === "trakstarhire.com" ||
-        normalized === "trakstarhirecom"
-      ) {
-        return "trakstar";
-      }
-      if (
-        normalized === "ycombinator" ||
-        normalized === "ycombinator.com" ||
-        normalized === "ycombinatorcom" ||
-        normalized === "www.ycombinator.com" ||
-        normalized === "wwwycombinatorcom"
-      ) {
-        return "ycombinator";
-      }
-      if (
-        normalized === "yello" ||
-        normalized === "yello.co" ||
-        normalized === "yelloco" ||
-        normalized === "www.yello.co" ||
-        normalized === "wwwyelloco"
-      ) {
-        return "yello";
-      }
-      if (normalized === "isolved" || normalized === "isolvedhire" || normalized === "isolvedhire.com" || normalized === "isolvedhirecom") {
-        return "isolved";
-      }
-      if (normalized === "applicantprocom" || normalized === "applicantpro.com") return "applicantpro";
-      if (normalized === "applytojobcom" || normalized === "applytojob.com") return "applytojob";
-      if (normalized === "theapplicantmanagercom" || normalized === "theapplicantmanager.com") {
-        return "theapplicantmanager";
-      }
-      if (normalized === "breezyhr" || normalized === "breezy.hr" || normalized === "breezyhrcom") return "breezy";
-      if (normalized === "zohorecruit" || normalized === "zohorecruit.com" || normalized === "zohorecruitcom") return "zoho";
-      if (normalized === "applicantai.com" || normalized === "applicantaicom") return "applicantai";
-      if (normalized === "bamboohr.com" || normalized === "bamboohrcom") return "bamboohr";
-      if (normalized === "careerplug.com" || normalized === "careerplugcom") return "careerplug";
-      if (normalized === "manatal.com" || normalized === "manatalcom" || normalized === "careers-page.com" || normalized === "careerspagecom") {
-        return "manatal";
-      }
-      if (normalized === "careerpuck.com" || normalized === "careerpuckcom") return "careerpuck";
-      if (normalized === "fountain.com" || normalized === "fountaincom") return "fountain";
-      if (normalized === "getro.com" || normalized === "getrocom") return "getro";
-      if (normalized === "governmentjobs.com" || normalized === "governmentjobscom" || normalized === "governmentjobs") {
-        return "governmentjobs";
-      }
-      if (normalized === "policeapp" || normalized === "policeapp.com" || normalized === "policeappcom" || normalized === "www.policeapp.com" || normalized === "wwwpoliceappcom") {
-        return "policeapp";
-      }
-      if (normalized === "usajobs" || normalized === "usajobs.gov" || normalized === "usajobsgov" || normalized === "www.usajobs.gov" || normalized === "wwwusajobsgov") {
-        return "usajobs";
-      }
-      if (normalized === "k12jobspot" || normalized === "k12jobspot.com" || normalized === "k12jobspotcom" || normalized === "www.k12jobspot.com" || normalized === "wwwk12jobspotcom" || normalized === "api.k12jobspot.com" || normalized === "apik12jobspotcom") {
-        return "k12jobspot";
-      }
-      if (normalized === "schoolspring" || normalized === "schoolspring.com" || normalized === "schoolspringcom" || normalized === "www.schoolspring.com" || normalized === "wwwschoolspringcom" || normalized === "api.schoolspring.com" || normalized === "apischoolspringcom") {
-        return "schoolspring";
-      }
-      if (
-        normalized === "calcareers" ||
-        normalized === "calcareers.ca.gov" ||
-        normalized === "calcareerscagov" ||
-        normalized === "www.calcareers.ca.gov" ||
-        normalized === "wwwcalcareerscagov"
-      ) {
-        return "calcareers";
-      }
-      if (
-        normalized === "calopps" ||
-        normalized === "calopps.org" ||
-        normalized === "caloppsorg" ||
-        normalized === "www.calopps.org" ||
-        normalized === "wwwcaloppsorg"
-      ) {
-        return "calopps";
-      }
-      if (
-        normalized === "statejobsny" ||
-        normalized === "statejobsny.com" ||
-        normalized === "statejobsnycom" ||
-        normalized === "www.statejobsny.com" ||
-        normalized === "wwwstatejobsnycom"
-      ) {
-        return "statejobsny";
-      }
-      if (
-        normalized === "edjoin" ||
-        normalized === "edjoin.org" ||
-        normalized === "edjoinorg" ||
-        normalized === "www.edjoin.org" ||
-        normalized === "wwwedjoinorg"
-      ) {
-        return "edjoin";
-      }
-      if (
-        normalized === "webcruiter" ||
-        normalized === "webcruiter.com" ||
-        normalized === "webcruitercom" ||
-        normalized === "candidate.webcruiter.com" ||
-        normalized === "candidatewebcruitercom"
-      ) {
-        return "webcruiter";
-      }
-      if (
-        normalized === "academicjobsonline" ||
-        normalized === "academicjobsonline.org" ||
-        normalized === "academicjobsonlineorg" ||
-        normalized === "www.academicjobsonline.org" ||
-        normalized === "wwwacademicjobsonlineorg"
-      ) {
-        return "academicjobsonline";
-      }
-      if (
-        normalized === "smartrecruiters.com" ||
-        normalized === "smartrecruiterscom" ||
-        normalized === "jobs.smartrecruiters.com" ||
-        normalized === "jobssmartrecruiterscom" ||
-        normalized === "smartrecruiters"
-      ) {
-        return "smartrecruiters";
-      }
-      if (normalized === "hrmdirect.com" || normalized === "hrmdirectcom") return "hrmdirect";
-      if (normalized === "talentlyft.com" || normalized === "talentlyftcom") return "talentlyft";
-      if (normalized === "talexio.com" || normalized === "talexiocom") return "talexio";
-      if (normalized === "teamtailor.com" || normalized === "teamtailorcom") return "teamtailor";
-      if (normalized === "freshteam.com" || normalized === "freshteamcom") return "freshteam";
-      if (normalized === "agilehr.com" || normalized === "agilehrcom" || normalized === "agilehr") return "agilehr";
-      if (normalized === "avature" || normalized === "avature.net" || normalized === "avaturenet") return "avature";
-      if (normalized === "comeet" || normalized === "comeet.com" || normalized === "comeetcom" || normalized === "www.comeet.com" || normalized === "wwwcomeetcom") return "comeet";
-      if (normalized === "sagehr" || normalized === "sage.hr" || normalized === "talent.sage.hr" || normalized === "talentsagehr") return "sagehr";
-      if (normalized === "loxo.co" || normalized === "loxoco" || normalized === "app.loxo.co" || normalized === "apploxoco") return "loxo";
-      if (normalized === "peopleforce.io" || normalized === "peopleforceio") return "peopleforce";
-      if (normalized === "simplicant.com" || normalized === "simplicantcom") return "simplicant";
-      if (normalized === "pinpointhq.com" || normalized === "pinpointhqcom") return "pinpointhq";
-      if (normalized === "recruitcrm.io" || normalized === "recruitcrmiocom" || normalized === "recruitcrmio") return "recruitcrm";
-      if (normalized === "rippling.com" || normalized === "ripplingcom" || normalized === "ats.rippling.com" || normalized === "atsripplingcom" || normalized === "rippling") {
-        return "rippling";
-      }
-      if (normalized === "jobs.gem.com" || normalized === "gem.com" || normalized === "gemcom") return "gem";
-      if (normalized === "jobapscloud.com" || normalized === "jobapscloudcom") return "jobaps";
-      if (normalized === "join.com" || normalized === "joincom") return "join";
-      if (normalized === "jobappnetwork.com" || normalized === "jobappnetworkcom" || normalized === "apply.jobappnetwork.com" || normalized === "applyjobappnetworkcom") {
-        return "talentreef";
-      }
-      if (normalized === "saphrcloud" || normalized === "saphrcloud.com" || normalized === "saphrcloudcom" || normalized === "jobs.hr.cloud.sap" || normalized === "jobshrcloudsap") {
-        return "saphrcloud";
-      }
-      if (normalized === "adp_myjobs" || normalized === "adpmyjobs") return "adp_myjobs";
-      if (
-        normalized === "paycor" ||
-        normalized === "recruitingbypaycor.com" ||
-        normalized === "recruitingbypaycorcom" ||
-        normalized === "www.recruitingbypaycor.com" ||
-        normalized === "wwwrecruitingbypaycorcom"
-      ) {
-        return "paycor";
-      }
-      if (
-        normalized === "paycomonline" ||
-        normalized === "paycomonline.net" ||
-        normalized === "paycomonlinenet" ||
-        normalized === "www.paycomonline.net" ||
-        normalized === "wwwpaycomonlinenet"
-      ) {
-        return "paycomonline";
-      }
-      if (
-        normalized === "prismhr" ||
-        normalized === "prismhr-hire.com" ||
-        normalized === "prismhrhirecom" ||
-        normalized === "www.prismhr-hire.com" ||
-        normalized === "wwwprismhrhirecom"
-      ) {
-        return "prismhr";
-      }
-      if (
-        normalized === "silkroad" ||
-        normalized === "jobs.silkroad.com" ||
-        normalized === "jobssilkroadcom" ||
-        normalized === "www.jobs.silkroad.com" ||
-        normalized === "wwwjobssilkroadcom"
-      ) {
-        return "silkroad";
-      }
-      if (normalized === "adp_workforcenow" || normalized === "adpworkforcenow" || normalized === "workforcenow.adp.com" || normalized === "workforcenowadpcom") {
-        return "adp_workforcenow";
-      }
-      if (normalized === "careerspage" || normalized === "careerspage.io" || normalized === "careerspageio") return "careerspage";
-      if (normalized === "paylocity" || normalized === "paylocity.com" || normalized === "paylocitycom" || normalized === "recruiting.paylocity.com" || normalized === "recruitingpaylocitycom") {
-        return "paylocity";
-      }
-      if (normalized === "eightfold" || normalized === "eightfold.ai" || normalized === "eightfoldai") return "eightfold";
-      if (normalized === "pageup" || normalized === "pageuppeople" || normalized === "pageuppeople.com" || normalized === "pageuppeoplecom" || normalized === "careers.pageuppeople.com" || normalized === "careerspageuppeoplecom") {
-        return "pageup";
-      }
-      if (normalized === "oracle" || normalized === "oraclecloud" || normalized === "oraclecloud.com" || normalized === "oraclecloudcom") return "oracle";
-      if (normalized === "hirebridge" || normalized === "hirebridge.com" || normalized === "hirebridgecom" || normalized === "recruit.hirebridge.com" || normalized === "recruithirebridgecom") {
-        return "hirebridge";
-      }
-      if (normalized === "brassring" || normalized === "brassring.com" || normalized === "brassringcom" || normalized === "sjobs.brassring.com" || normalized === "sjobsbrassringcom") {
-        return "brassring";
-      }
-      if (normalized === "recruiteecom" || normalized === "recruitee.com") return "recruitee";
-      if (
-        normalized === "ukg" ||
-        normalized === "ukg.net" ||
-        normalized === "ukgnet" ||
-        normalized === "rec.pro.ukg.net" ||
-        normalized === "recproukgnet"
-      ) {
-        return "ukg";
-      }
-      if (normalized === "taleonet" || normalized === "taleo.net") return "taleo";
-      return normalized;
-    })
-    .filter((item) => ATS_FILTER_OPTIONS.has(item));
-  return Array.from(new Set(items));
+	const rawItems = Array.isArray(value) ? value : value ? [value] : [];
+	const items = rawItems
+		.map((item) => {
+			const normalized = normalizeLikeText(item);
+			if (normalized === 'ashbyhq') return 'ashby';
+			if (normalized === 'greenhouseio' || normalized === 'greenhouse.io') return 'greenhouse';
+			if (normalized === 'leverco' || normalized === 'lever.co') return 'lever';
+			if (
+				normalized === 'dayforce' ||
+				normalized === 'dayforcehcm' ||
+				normalized === 'dayforcehcm.com'
+			) {
+				return 'dayforcehcm';
+			}
+			if (normalized === 'jobvitecom' || normalized === 'jobvite.com') return 'jobvite';
+			if (
+				normalized === 'applitrackcom' ||
+				normalized === 'applitrack.com' ||
+				normalized === 'applitrack'
+			) {
+				return 'applitrack';
+			}
+			if (
+				normalized === 'hibob.com' ||
+				normalized === 'hibobcom' ||
+				normalized === 'hibob' ||
+				normalized === 'careers.hibob.com' ||
+				normalized === 'careershibobcom'
+			) {
+				return 'hibob';
+			}
+			if (
+				normalized === 'hiringplatform' ||
+				normalized === 'hiringplatform.com' ||
+				normalized === 'hiringplatformcom'
+			) {
+				return 'hiringplatform';
+			}
+			if (normalized === 'homerun' || normalized === 'homerun.co' || normalized === 'homerunco') {
+				return 'homerun';
+			}
+			if (
+				normalized === 'jibeapply' ||
+				normalized === 'jibeapply.com' ||
+				normalized === 'jibeapplycom'
+			) {
+				return 'jibeapply';
+			}
+			if (
+				normalized === 'jobs2web' ||
+				normalized === 'jobs2web.com' ||
+				normalized === 'jobs2webcom'
+			) {
+				return 'jobs2web';
+			}
+			if (
+				normalized === 'occupop' ||
+				normalized === 'occupop.com' ||
+				normalized === 'occupopcom' ||
+				normalized === 'occupop-careers.com' ||
+				normalized === 'occupopcareerscom'
+			) {
+				return 'occupop';
+			}
+			if (
+				normalized === 'peopleadmin' ||
+				normalized === 'peopleadmin.com' ||
+				normalized === 'peopleadmincom'
+			) {
+				return 'peopleadmin';
+			}
+			if (
+				normalized === 'personio' ||
+				normalized === 'personio.com' ||
+				normalized === 'personiocom' ||
+				normalized === 'jobs.personio.com' ||
+				normalized === 'jobspersoniocom'
+			) {
+				return 'personio';
+			}
+			if (
+				normalized === 'recruiterflow' ||
+				normalized === 'recruiterflow.com' ||
+				normalized === 'recruiterflowcom' ||
+				normalized === 'www.recruiterflow.com' ||
+				normalized === 'wwwrecruiterflowcom'
+			) {
+				return 'recruiterflow';
+			}
+			if (
+				normalized === 'trakstar' ||
+				normalized === 'hire.trakstar.com' ||
+				normalized === 'hiretrakstarcom' ||
+				normalized === 'recruiterbox.com' ||
+				normalized === 'recruiterboxcom' ||
+				normalized === 'trakstarhire.com' ||
+				normalized === 'trakstarhirecom'
+			) {
+				return 'trakstar';
+			}
+			if (
+				normalized === 'ycombinator' ||
+				normalized === 'ycombinator.com' ||
+				normalized === 'ycombinatorcom' ||
+				normalized === 'www.ycombinator.com' ||
+				normalized === 'wwwycombinatorcom'
+			) {
+				return 'ycombinator';
+			}
+			if (
+				normalized === 'yello' ||
+				normalized === 'yello.co' ||
+				normalized === 'yelloco' ||
+				normalized === 'www.yello.co' ||
+				normalized === 'wwwyelloco'
+			) {
+				return 'yello';
+			}
+			if (
+				normalized === 'isolved' ||
+				normalized === 'isolvedhire' ||
+				normalized === 'isolvedhire.com' ||
+				normalized === 'isolvedhirecom'
+			) {
+				return 'isolved';
+			}
+			if (normalized === 'applicantprocom' || normalized === 'applicantpro.com')
+				return 'applicantpro';
+			if (normalized === 'applytojobcom' || normalized === 'applytojob.com') return 'applytojob';
+			if (normalized === 'theapplicantmanagercom' || normalized === 'theapplicantmanager.com') {
+				return 'theapplicantmanager';
+			}
+			if (normalized === 'breezyhr' || normalized === 'breezy.hr' || normalized === 'breezyhrcom')
+				return 'breezy';
+			if (
+				normalized === 'zohorecruit' ||
+				normalized === 'zohorecruit.com' ||
+				normalized === 'zohorecruitcom'
+			)
+				return 'zoho';
+			if (normalized === 'applicantai.com' || normalized === 'applicantaicom') return 'applicantai';
+			if (normalized === 'bamboohr.com' || normalized === 'bamboohrcom') return 'bamboohr';
+			if (normalized === 'careerplug.com' || normalized === 'careerplugcom') return 'careerplug';
+			if (
+				normalized === 'manatal.com' ||
+				normalized === 'manatalcom' ||
+				normalized === 'careers-page.com' ||
+				normalized === 'careerspagecom'
+			) {
+				return 'manatal';
+			}
+			if (normalized === 'careerpuck.com' || normalized === 'careerpuckcom') return 'careerpuck';
+			if (normalized === 'fountain.com' || normalized === 'fountaincom') return 'fountain';
+			if (normalized === 'getro.com' || normalized === 'getrocom') return 'getro';
+			if (
+				normalized === 'governmentjobs.com' ||
+				normalized === 'governmentjobscom' ||
+				normalized === 'governmentjobs'
+			) {
+				return 'governmentjobs';
+			}
+			if (
+				normalized === 'policeapp' ||
+				normalized === 'policeapp.com' ||
+				normalized === 'policeappcom' ||
+				normalized === 'www.policeapp.com' ||
+				normalized === 'wwwpoliceappcom'
+			) {
+				return 'policeapp';
+			}
+			if (
+				normalized === 'usajobs' ||
+				normalized === 'usajobs.gov' ||
+				normalized === 'usajobsgov' ||
+				normalized === 'www.usajobs.gov' ||
+				normalized === 'wwwusajobsgov'
+			) {
+				return 'usajobs';
+			}
+			if (
+				normalized === 'k12jobspot' ||
+				normalized === 'k12jobspot.com' ||
+				normalized === 'k12jobspotcom' ||
+				normalized === 'www.k12jobspot.com' ||
+				normalized === 'wwwk12jobspotcom' ||
+				normalized === 'api.k12jobspot.com' ||
+				normalized === 'apik12jobspotcom'
+			) {
+				return 'k12jobspot';
+			}
+			if (
+				normalized === 'schoolspring' ||
+				normalized === 'schoolspring.com' ||
+				normalized === 'schoolspringcom' ||
+				normalized === 'www.schoolspring.com' ||
+				normalized === 'wwwschoolspringcom' ||
+				normalized === 'api.schoolspring.com' ||
+				normalized === 'apischoolspringcom'
+			) {
+				return 'schoolspring';
+			}
+			if (
+				normalized === 'calcareers' ||
+				normalized === 'calcareers.ca.gov' ||
+				normalized === 'calcareerscagov' ||
+				normalized === 'www.calcareers.ca.gov' ||
+				normalized === 'wwwcalcareerscagov'
+			) {
+				return 'calcareers';
+			}
+			if (
+				normalized === 'calopps' ||
+				normalized === 'calopps.org' ||
+				normalized === 'caloppsorg' ||
+				normalized === 'www.calopps.org' ||
+				normalized === 'wwwcaloppsorg'
+			) {
+				return 'calopps';
+			}
+			if (
+				normalized === 'statejobsny' ||
+				normalized === 'statejobsny.com' ||
+				normalized === 'statejobsnycom' ||
+				normalized === 'www.statejobsny.com' ||
+				normalized === 'wwwstatejobsnycom'
+			) {
+				return 'statejobsny';
+			}
+			if (
+				normalized === 'edjoin' ||
+				normalized === 'edjoin.org' ||
+				normalized === 'edjoinorg' ||
+				normalized === 'www.edjoin.org' ||
+				normalized === 'wwwedjoinorg'
+			) {
+				return 'edjoin';
+			}
+			if (
+				normalized === 'webcruiter' ||
+				normalized === 'webcruiter.com' ||
+				normalized === 'webcruitercom' ||
+				normalized === 'candidate.webcruiter.com' ||
+				normalized === 'candidatewebcruitercom'
+			) {
+				return 'webcruiter';
+			}
+			if (
+				normalized === 'academicjobsonline' ||
+				normalized === 'academicjobsonline.org' ||
+				normalized === 'academicjobsonlineorg' ||
+				normalized === 'www.academicjobsonline.org' ||
+				normalized === 'wwwacademicjobsonlineorg'
+			) {
+				return 'academicjobsonline';
+			}
+			if (
+				normalized === 'smartrecruiters.com' ||
+				normalized === 'smartrecruiterscom' ||
+				normalized === 'jobs.smartrecruiters.com' ||
+				normalized === 'jobssmartrecruiterscom' ||
+				normalized === 'smartrecruiters'
+			) {
+				return 'smartrecruiters';
+			}
+			if (normalized === 'hrmdirect.com' || normalized === 'hrmdirectcom') return 'hrmdirect';
+			if (normalized === 'talentlyft.com' || normalized === 'talentlyftcom') return 'talentlyft';
+			if (normalized === 'talexio.com' || normalized === 'talexiocom') return 'talexio';
+			if (normalized === 'teamtailor.com' || normalized === 'teamtailorcom') return 'teamtailor';
+			if (normalized === 'freshteam.com' || normalized === 'freshteamcom') return 'freshteam';
+			if (normalized === 'agilehr.com' || normalized === 'agilehrcom' || normalized === 'agilehr')
+				return 'agilehr';
+			if (normalized === 'avature' || normalized === 'avature.net' || normalized === 'avaturenet')
+				return 'avature';
+			if (
+				normalized === 'comeet' ||
+				normalized === 'comeet.com' ||
+				normalized === 'comeetcom' ||
+				normalized === 'www.comeet.com' ||
+				normalized === 'wwwcomeetcom'
+			)
+				return 'comeet';
+			if (
+				normalized === 'sagehr' ||
+				normalized === 'sage.hr' ||
+				normalized === 'talent.sage.hr' ||
+				normalized === 'talentsagehr'
+			)
+				return 'sagehr';
+			if (
+				normalized === 'loxo.co' ||
+				normalized === 'loxoco' ||
+				normalized === 'app.loxo.co' ||
+				normalized === 'apploxoco'
+			)
+				return 'loxo';
+			if (normalized === 'peopleforce.io' || normalized === 'peopleforceio') return 'peopleforce';
+			if (normalized === 'simplicant.com' || normalized === 'simplicantcom') return 'simplicant';
+			if (normalized === 'pinpointhq.com' || normalized === 'pinpointhqcom') return 'pinpointhq';
+			if (
+				normalized === 'recruitcrm.io' ||
+				normalized === 'recruitcrmiocom' ||
+				normalized === 'recruitcrmio'
+			)
+				return 'recruitcrm';
+			if (
+				normalized === 'rippling.com' ||
+				normalized === 'ripplingcom' ||
+				normalized === 'ats.rippling.com' ||
+				normalized === 'atsripplingcom' ||
+				normalized === 'rippling'
+			) {
+				return 'rippling';
+			}
+			if (normalized === 'jobs.gem.com' || normalized === 'gem.com' || normalized === 'gemcom')
+				return 'gem';
+			if (normalized === 'jobapscloud.com' || normalized === 'jobapscloudcom') return 'jobaps';
+			if (normalized === 'join.com' || normalized === 'joincom') return 'join';
+			if (
+				normalized === 'jobappnetwork.com' ||
+				normalized === 'jobappnetworkcom' ||
+				normalized === 'apply.jobappnetwork.com' ||
+				normalized === 'applyjobappnetworkcom'
+			) {
+				return 'talentreef';
+			}
+			if (
+				normalized === 'saphrcloud' ||
+				normalized === 'saphrcloud.com' ||
+				normalized === 'saphrcloudcom' ||
+				normalized === 'jobs.hr.cloud.sap' ||
+				normalized === 'jobshrcloudsap'
+			) {
+				return 'saphrcloud';
+			}
+			if (normalized === 'adp_myjobs' || normalized === 'adpmyjobs') return 'adp_myjobs';
+			if (
+				normalized === 'paycor' ||
+				normalized === 'recruitingbypaycor.com' ||
+				normalized === 'recruitingbypaycorcom' ||
+				normalized === 'www.recruitingbypaycor.com' ||
+				normalized === 'wwwrecruitingbypaycorcom'
+			) {
+				return 'paycor';
+			}
+			if (
+				normalized === 'paycomonline' ||
+				normalized === 'paycomonline.net' ||
+				normalized === 'paycomonlinenet' ||
+				normalized === 'www.paycomonline.net' ||
+				normalized === 'wwwpaycomonlinenet'
+			) {
+				return 'paycomonline';
+			}
+			if (
+				normalized === 'prismhr' ||
+				normalized === 'prismhr-hire.com' ||
+				normalized === 'prismhrhirecom' ||
+				normalized === 'www.prismhr-hire.com' ||
+				normalized === 'wwwprismhrhirecom'
+			) {
+				return 'prismhr';
+			}
+			if (
+				normalized === 'silkroad' ||
+				normalized === 'jobs.silkroad.com' ||
+				normalized === 'jobssilkroadcom' ||
+				normalized === 'www.jobs.silkroad.com' ||
+				normalized === 'wwwjobssilkroadcom'
+			) {
+				return 'silkroad';
+			}
+			if (
+				normalized === 'adp_workforcenow' ||
+				normalized === 'adpworkforcenow' ||
+				normalized === 'workforcenow.adp.com' ||
+				normalized === 'workforcenowadpcom'
+			) {
+				return 'adp_workforcenow';
+			}
+			if (
+				normalized === 'careerspage' ||
+				normalized === 'careerspage.io' ||
+				normalized === 'careerspageio'
+			)
+				return 'careerspage';
+			if (
+				normalized === 'paylocity' ||
+				normalized === 'paylocity.com' ||
+				normalized === 'paylocitycom' ||
+				normalized === 'recruiting.paylocity.com' ||
+				normalized === 'recruitingpaylocitycom'
+			) {
+				return 'paylocity';
+			}
+			if (
+				normalized === 'eightfold' ||
+				normalized === 'eightfold.ai' ||
+				normalized === 'eightfoldai'
+			)
+				return 'eightfold';
+			if (
+				normalized === 'pageup' ||
+				normalized === 'pageuppeople' ||
+				normalized === 'pageuppeople.com' ||
+				normalized === 'pageuppeoplecom' ||
+				normalized === 'careers.pageuppeople.com' ||
+				normalized === 'careerspageuppeoplecom'
+			) {
+				return 'pageup';
+			}
+			if (
+				normalized === 'oracle' ||
+				normalized === 'oraclecloud' ||
+				normalized === 'oraclecloud.com' ||
+				normalized === 'oraclecloudcom'
+			)
+				return 'oracle';
+			if (
+				normalized === 'hirebridge' ||
+				normalized === 'hirebridge.com' ||
+				normalized === 'hirebridgecom' ||
+				normalized === 'recruit.hirebridge.com' ||
+				normalized === 'recruithirebridgecom'
+			) {
+				return 'hirebridge';
+			}
+			if (
+				normalized === 'brassring' ||
+				normalized === 'brassring.com' ||
+				normalized === 'brassringcom' ||
+				normalized === 'sjobs.brassring.com' ||
+				normalized === 'sjobsbrassringcom'
+			) {
+				return 'brassring';
+			}
+			if (normalized === 'recruiteecom' || normalized === 'recruitee.com') return 'recruitee';
+			if (
+				normalized === 'ukg' ||
+				normalized === 'ukg.net' ||
+				normalized === 'ukgnet' ||
+				normalized === 'rec.pro.ukg.net' ||
+				normalized === 'recproukgnet'
+			) {
+				return 'ukg';
+			}
+			if (normalized === 'taleonet' || normalized === 'taleo.net') return 'taleo';
+			return normalized;
+		})
+		.filter((item) => ATS_FILTER_OPTIONS.has(item));
+	return Array.from(new Set(items));
 }
 
 function normalizeCountyName(value) {
-  return normalizeLikeText(value)
-    .replace(/\b(county|parish|borough|census area|municipality)\b/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
+	return normalizeLikeText(value)
+		.replace(/\b(county|parish|borough|census area|municipality)\b/g, '')
+		.replace(/\s+/g, ' ')
+		.trim();
 }
 
 function parseCountyFilters(values) {
-  const parsed = [];
-  for (const rawValue of values || []) {
-    const value = String(rawValue || "").trim();
-    if (!value) continue;
+	const parsed = [];
+	for (const rawValue of values || []) {
+		const value = String(rawValue || '').trim();
+		if (!value) continue;
 
-    if (value.includes("|")) {
-      const [stateRaw, countyRaw] = value.split("|");
-      const stateCode = String(stateRaw || "").trim().toUpperCase();
-      const countyLikePart = normalizeCountyName(countyRaw);
-      if (!countyLikePart) continue;
-      parsed.push({ stateCode, countyLikePart });
-      continue;
-    }
+		if (value.includes('|')) {
+			const [stateRaw, countyRaw] = value.split('|');
+			const stateCode = String(stateRaw || '')
+				.trim()
+				.toUpperCase();
+			const countyLikePart = normalizeCountyName(countyRaw);
+			if (!countyLikePart) continue;
+			parsed.push({ stateCode, countyLikePart });
+			continue;
+		}
 
-    const countyLikePart = normalizeCountyName(value);
-    if (!countyLikePart) continue;
-    parsed.push({ stateCode: "", countyLikePart });
-  }
-  return parsed;
+		const countyLikePart = normalizeCountyName(value);
+		if (!countyLikePart) continue;
+		parsed.push({ stateCode: '', countyLikePart });
+	}
+	return parsed;
 }
 
 function createLikeParts(value) {
-  const normalized = normalizeLikeText(value);
-  if (!normalized) return [];
-  return normalized
-    .split(/[^a-z0-9]+/)
-    .map((part) => part.trim())
-    .filter((part) => part.length >= 3 && !GENERIC_TITLE_LIKE_PARTS.has(part));
+	const normalized = normalizeLikeText(value);
+	if (!normalized) return [];
+	return normalized
+		.split(/[^a-z0-9]+/)
+		.map((part) => part.trim())
+		.filter((part) => part.length >= 3 && !GENERIC_TITLE_LIKE_PARTS.has(part));
 }
 
 function buildWordNgrams(words, minSize = 2, maxSize = 3) {
-  const source = Array.isArray(words) ? words : [];
-  const ngrams = [];
-  for (let size = minSize; size <= maxSize; size += 1) {
-    if (source.length < size) continue;
-    for (let index = 0; index <= source.length - size; index += 1) {
-      const gram = source.slice(index, index + size).join(" ").trim();
-      if (gram) ngrams.push(gram);
-    }
-  }
-  return ngrams;
+	const source = Array.isArray(words) ? words : [];
+	const ngrams = [];
+	for (let size = minSize; size <= maxSize; size += 1) {
+		if (source.length < size) continue;
+		for (let index = 0; index <= source.length - size; index += 1) {
+			const gram = source
+				.slice(index, index + size)
+				.join(' ')
+				.trim();
+			if (gram) ngrams.push(gram);
+		}
+	}
+	return ngrams;
 }
 
 function hasStateLikeMatch(locationText, stateCode) {
-  const code = String(stateCode || "").trim().toUpperCase();
-  if (!code) return false;
+	const code = String(stateCode || '')
+		.trim()
+		.toUpperCase();
+	if (!code) return false;
 
-  const upperLocation = String(locationText || "").toUpperCase();
-  const codeRegex = new RegExp(`(^|[^A-Z])${code}([^A-Z]|$)`);
-  if (codeRegex.test(upperLocation)) return true;
+	const upperLocation = String(locationText || '').toUpperCase();
+	const codeRegex = new RegExp(`(^|[^A-Z])${code}([^A-Z]|$)`);
+	if (codeRegex.test(upperLocation)) return true;
 
-  const stateName = STATE_CODE_TO_NAME[code];
-  if (!stateName) return false;
-  return normalizeLikeText(locationText).includes(stateName);
+	const stateName = STATE_CODE_TO_NAME[code];
+	if (!stateName) return false;
+	return normalizeLikeText(locationText).includes(stateName);
 }
 
 function rowMatchesLocationFilters(locationText, selectedStateCodes, countyFilters) {
-  const stateCodes = Array.isArray(selectedStateCodes) ? selectedStateCodes : [];
-  const counties = Array.isArray(countyFilters) ? countyFilters : [];
-  if (stateCodes.length === 0 && counties.length === 0) return true;
+	const stateCodes = Array.isArray(selectedStateCodes) ? selectedStateCodes : [];
+	const counties = Array.isArray(countyFilters) ? countyFilters : [];
+	if (stateCodes.length === 0 && counties.length === 0) return true;
 
-  const location = String(locationText || "").trim();
-  if (!location) return false;
-  const normalizedLocation = normalizeLikeText(location);
+	const location = String(locationText || '').trim();
+	if (!location) return false;
+	const normalizedLocation = normalizeLikeText(location);
 
-  if (stateCodes.length > 0) {
-    const hasSelectedState = stateCodes.some((stateCode) => hasStateLikeMatch(location, stateCode));
-    if (!hasSelectedState) return false;
-  }
+	if (stateCodes.length > 0) {
+		const hasSelectedState = stateCodes.some((stateCode) => hasStateLikeMatch(location, stateCode));
+		if (!hasSelectedState) return false;
+	}
 
-  if (counties.length > 0) {
-    const matchesCounty = counties.some((countyFilter) => {
-      const countyLikePart = String(countyFilter?.countyLikePart || "").trim();
-      if (!countyLikePart) return false;
+	if (counties.length > 0) {
+		const matchesCounty = counties.some((countyFilter) => {
+			const countyLikePart = String(countyFilter?.countyLikePart || '').trim();
+			if (!countyLikePart) return false;
 
-      if (countyFilter.stateCode && !hasStateLikeMatch(location, countyFilter.stateCode)) {
-        return false;
-      }
+			if (countyFilter.stateCode && !hasStateLikeMatch(location, countyFilter.stateCode)) {
+				return false;
+			}
 
-      return (
-        normalizedLocation.includes(countyLikePart) ||
-        normalizedLocation.includes(`${countyLikePart} county`) ||
-        normalizedLocation.includes(`${countyLikePart} parish`) ||
-        normalizedLocation.includes(`${countyLikePart} borough`) ||
-        normalizedLocation.includes(`${countyLikePart} census area`)
-      );
-    });
+			return (
+				normalizedLocation.includes(countyLikePart) ||
+				normalizedLocation.includes(`${countyLikePart} county`) ||
+				normalizedLocation.includes(`${countyLikePart} parish`) ||
+				normalizedLocation.includes(`${countyLikePart} borough`) ||
+				normalizedLocation.includes(`${countyLikePart} census area`)
+			);
+		});
 
-    if (!matchesCounty) return false;
-  }
+		if (!matchesCounty) return false;
+	}
 
-  return true;
+	return true;
+}
+
+function normalizeCountryMatchText(value) {
+	return String(value || '')
+		.toLowerCase()
+		.replace(/\./g, '')
+		.replace(/[^a-z0-9]+/g, ' ')
+		.trim();
+}
+
+// ATS location fields format the country in wildly inconsistent ways
+// ("US", "USA", "U.S.", or omitted entirely for domestic postings). These
+// cover the common US spellings the bare ISO code + Intl display name miss.
+const US_COUNTRY_ALIAS_TOKENS = ['usa'];
+const US_COUNTRY_ALIAS_PHRASES = ['united states of america', 'america'];
+
+function rowMatchesCountryFilters(locationText, selectedCountries) {
+	const countries = Array.isArray(selectedCountries) ? selectedCountries : [];
+	if (countries.length === 0) return true;
+
+	const location = normalizeCountryMatchText(locationText);
+	if (!location) return false;
+
+	return countries.some((countryValue) => {
+		const country = String(countryValue || '').trim();
+		if (!country) return false;
+		if (country.toUpperCase().startsWith('RAW:')) {
+			return location.includes(normalizeCountryMatchText(country.slice(4)));
+		}
+
+		const code = country.toUpperCase();
+		let label = '';
+		try {
+			label = new Intl.DisplayNames(['en'], { type: 'region' }).of(code) || '';
+		} catch {
+			label = '';
+		}
+		const codePattern = new RegExp(`(^|[^a-z])${code.toLowerCase()}([^a-z]|$)`);
+		if (codePattern.test(location)) return true;
+		if (label && location.includes(normalizeCountryMatchText(label))) return true;
+
+		if (code !== 'US') return false;
+
+		const matchesUsAliasToken = US_COUNTRY_ALIAS_TOKENS.some((token) =>
+			new RegExp(`(^|[^a-z])${token}([^a-z]|$)`).test(location),
+		);
+		if (matchesUsAliasToken) return true;
+		if (US_COUNTRY_ALIAS_PHRASES.some((phrase) => location.includes(phrase))) return true;
+
+		// No explicit country marker — many ATS location fields omit the
+		// country for domestic postings, so a recognized US state/DC mention
+		// is still strong evidence this is a US posting.
+		return Object.keys(STATE_CODE_TO_NAME).some((stateCode) => hasStateLikeMatch(location, stateCode));
+	});
 }
 
 function classifyLocationWorkMode(locationText) {
-  const normalized = normalizeLikeText(locationText);
-  if (!normalized) return "non_remote";
-  const hasHybrid = normalized.includes("hybrid");
-  const hasRemote = normalized.includes("remote") || normalized.includes("work from home") || normalized.includes("wfh");
-  if (hasHybrid) return "hybrid";
-  if (hasRemote) return "remote";
-  return "non_remote";
+	const normalized = normalizeLikeText(locationText);
+	if (!normalized) return 'non_remote';
+	const hasHybrid = normalized.includes('hybrid');
+	const hasRemote =
+		normalized.includes('remote') ||
+		normalized.includes('work from home') ||
+		normalized.includes('wfh');
+	if (hasHybrid) return 'hybrid';
+	if (hasRemote) return 'remote';
+	return 'non_remote';
 }
 
 function rowMatchesRemoteFilter(locationText, remoteFilter) {
-  const normalized = normalizeRemoteFilter(remoteFilter);
-  if (normalized === "all") return true;
-  const mode = classifyLocationWorkMode(locationText);
-  if (normalized === "remote") return mode === "remote";
-  if (normalized === "hybrid") return mode === "hybrid";
-  if (normalized === "non_remote") return mode === "non_remote";
-  return true;
+	const normalized = normalizeRemoteFilter(remoteFilter);
+	if (normalized === 'all') return true;
+	const mode = classifyLocationWorkMode(locationText);
+	if (normalized === 'remote') return mode === 'remote';
+	if (normalized === 'hybrid') return mode === 'hybrid';
+	if (normalized === 'non_remote') return mode === 'non_remote';
+	return true;
 }
 
 function inferWorkdayLocationFromJobUrl(jobPostingUrl) {
-  try {
-    const parsed = new URL(String(jobPostingUrl || ""));
-    const pathParts = parsed.pathname
-      .split("/")
-      .map((part) => String(part || "").trim())
-      .filter(Boolean);
-    const jobIndex = pathParts.findIndex((part) => part.toLowerCase() === "job");
-    if (jobIndex >= 0 && pathParts[jobIndex + 1]) {
-      return decodeURIComponent(pathParts[jobIndex + 1]).replace(/-/g, " ").replace(/\s+/g, " ").trim();
-    }
-    return "";
-  } catch {
-    return "";
-  }
+	try {
+		const parsed = new URL(String(jobPostingUrl || ''));
+		const pathParts = parsed.pathname
+			.split('/')
+			.map((part) => String(part || '').trim())
+			.filter(Boolean);
+		const jobIndex = pathParts.findIndex((part) => part.toLowerCase() === 'job');
+		if (jobIndex >= 0 && pathParts[jobIndex + 1]) {
+			return decodeURIComponent(pathParts[jobIndex + 1])
+				.replace(/-/g, ' ')
+				.replace(/\s+/g, ' ')
+				.trim();
+		}
+		return '';
+	} catch {
+		return '';
+	}
 }
 
 function inferLocationFromJobUrl(jobPostingUrl) {
-  const url = String(jobPostingUrl || "").trim();
-  if (!url) return "";
-  try {
-    const parsed = new URL(url);
-    if (parsed.hostname.endsWith("myworkdayjobs.com")) {
-      return inferWorkdayLocationFromJobUrl(url);
-    }
-    return "";
-  } catch {
-    return "";
-  }
+	const url = String(jobPostingUrl || '').trim();
+	if (!url) return '';
+	try {
+		const parsed = new URL(url);
+		if (parsed.hostname.endsWith('myworkdayjobs.com')) {
+			return inferWorkdayLocationFromJobUrl(url);
+		}
+		return '';
+	} catch {
+		return '';
+	}
 }
 
 async function ensureTables() {
-  await db.exec(`
+	await db.exec(`
     CREATE TABLE IF NOT EXISTS PersonalInformation (
       first_name TEXT NOT NULL,
       middle_name TEXT NOT NULL,
@@ -953,6 +1211,7 @@ async function ensureTables() {
       preferred_search TEXT NOT NULL DEFAULT '',
       preferred_remote TEXT NOT NULL DEFAULT 'all',
       preferred_industries TEXT NOT NULL DEFAULT '[]',
+	    preferred_countries TEXT NOT NULL DEFAULT '[]',
       preferred_states TEXT NOT NULL DEFAULT '[]',
       preferred_counties TEXT NOT NULL DEFAULT '[]',
       instructions_for_agent TEXT NOT NULL DEFAULT '',
@@ -1001,48 +1260,58 @@ async function ensureTables() {
     ON CONFLICT(id) DO NOTHING;
   `);
 
-  const postingStateColumns = await db.all(`PRAGMA table_info('posting_application_state');`);
-  const postingStateColumnNames = new Set(postingStateColumns.map((column) => String(column?.name || "")));
-  const mcpSettingsColumns = await db.all(`PRAGMA table_info('McpSettings');`);
-  const mcpSettingsColumnNames = new Set(mcpSettingsColumns.map((column) => String(column?.name || "")));
+	const postingStateColumns = await db.all(`PRAGMA table_info('posting_application_state');`);
+	const postingStateColumnNames = new Set(
+		postingStateColumns.map((column) => String(column?.name || '')),
+	);
+	const mcpSettingsColumns = await db.all(`PRAGMA table_info('McpSettings');`);
+	const mcpSettingsColumnNames = new Set(
+		mcpSettingsColumns.map((column) => String(column?.name || '')),
+	);
 
-  if (!postingStateColumnNames.has("ignored")) {
-    await db.exec(`
+	if (!postingStateColumnNames.has('ignored')) {
+		await db.exec(`
       ALTER TABLE posting_application_state
       ADD COLUMN ignored INTEGER NOT NULL DEFAULT 0;
     `);
-  }
-  if (!postingStateColumnNames.has("ignored_at_epoch")) {
-    await db.exec(`
+	}
+	if (!postingStateColumnNames.has('ignored_at_epoch')) {
+		await db.exec(`
       ALTER TABLE posting_application_state
       ADD COLUMN ignored_at_epoch INTEGER;
     `);
-  }
-  if (!postingStateColumnNames.has("ignored_by_label")) {
-    await db.exec(`
+	}
+	if (!postingStateColumnNames.has('ignored_by_label')) {
+		await db.exec(`
       ALTER TABLE posting_application_state
       ADD COLUMN ignored_by_label TEXT NOT NULL DEFAULT '';
     `);
-  }
-  if (!mcpSettingsColumnNames.has("agent_login_password")) {
-    await db.exec(`
+	}
+	if (!mcpSettingsColumnNames.has('agent_login_password')) {
+		await db.exec(`
       ALTER TABLE McpSettings
       ADD COLUMN agent_login_password TEXT NOT NULL DEFAULT '';
     `);
-  }
+	}
+	if (!mcpSettingsColumnNames.has('preferred_countries')) {
+		await db.exec(`
+			ALTER TABLE McpSettings
+			ADD COLUMN preferred_countries TEXT NOT NULL DEFAULT '[]';
+		`);
+	}
 }
 
 async function openDatabase() {
-  db = await open({
-    filename: DB_PATH,
-    driver: sqlite3.Database
-  });
-  await ensureTables();
+	db = await open({
+		filename: DB_PATH,
+		driver: sqlite3.Database,
+	});
+	await ensureTables();
 }
 
 async function getPersonalInformation() {
-  const row = await db.get(
-    `
+	const row = await db.get(
+		`
       SELECT
         first_name,
         middle_name,
@@ -1066,24 +1335,24 @@ async function getPersonalInformation() {
       FROM PersonalInformation
       ORDER BY rowid ASC
       LIMIT 1;
-    `
-  );
-  return row || {};
+    `,
+	);
+	return row || {};
 }
 
 function parseJsonArray(value) {
-  try {
-    const parsed = JSON.parse(String(value || "[]"));
-    if (!Array.isArray(parsed)) return [];
-    return parsed.map((item) => String(item || "").trim()).filter(Boolean);
-  } catch {
-    return [];
-  }
+	try {
+		const parsed = JSON.parse(String(value || '[]'));
+		if (!Array.isArray(parsed)) return [];
+		return parsed.map((item) => String(item || '').trim()).filter(Boolean);
+	} catch {
+		return [];
+	}
 }
 
 async function getMcpSettings() {
-  const row = await db.get(
-    `
+	const row = await db.get(
+		`
       SELECT
         enabled,
         preferred_agent_name,
@@ -1097,317 +1366,340 @@ async function getMcpSettings() {
         preferred_search,
         preferred_remote,
         preferred_industries,
+        preferred_countries,
         preferred_states,
         preferred_counties,
         instructions_for_agent
       FROM McpSettings
       WHERE id = 1
       LIMIT 1;
-    `
-  );
+    `,
+	);
 
-  const agentLoginEmail = String(row?.agent_login_email || "");
-  return {
-    ...MCP_SETTINGS_DEFAULTS,
-    enabled: Boolean(Number(row?.enabled || 0)),
-    preferred_agent_name: String(row?.preferred_agent_name || MCP_SETTINGS_DEFAULTS.preferred_agent_name),
-    agent_login_email: agentLoginEmail,
-    agent_login_password: String(row?.agent_login_password || ""),
-    mfa_login_email: agentLoginEmail,
-    mfa_login_notes: String(row?.mfa_login_notes || ""),
-    dry_run_only: row?.dry_run_only === undefined ? true : Boolean(Number(row?.dry_run_only)),
-    require_final_approval:
-      row?.require_final_approval === undefined ? true : Boolean(Number(row?.require_final_approval)),
-    max_applications_per_run: parseNonNegativeInteger(row?.max_applications_per_run) || 10,
-    preferred_search: String(row?.preferred_search || ""),
-    preferred_remote: normalizeRemoteFilter(row?.preferred_remote),
-    preferred_industries: parseJsonArray(row?.preferred_industries),
-    preferred_states: parseJsonArray(row?.preferred_states).map((state) => state.toUpperCase()),
-    preferred_counties: parseJsonArray(row?.preferred_counties),
-    instructions_for_agent: String(row?.instructions_for_agent || "")
-  };
+	const agentLoginEmail = String(row?.agent_login_email || '');
+	return {
+		...MCP_SETTINGS_DEFAULTS,
+		enabled: Boolean(Number(row?.enabled || 0)),
+		preferred_agent_name: String(
+			row?.preferred_agent_name || MCP_SETTINGS_DEFAULTS.preferred_agent_name,
+		),
+		agent_login_email: agentLoginEmail,
+		agent_login_password: String(row?.agent_login_password || ''),
+		mfa_login_email: agentLoginEmail,
+		mfa_login_notes: String(row?.mfa_login_notes || ''),
+		dry_run_only: row?.dry_run_only === undefined ? true : Boolean(Number(row?.dry_run_only)),
+		require_final_approval:
+			row?.require_final_approval === undefined
+				? true
+				: Boolean(Number(row?.require_final_approval)),
+		max_applications_per_run: parseNonNegativeInteger(row?.max_applications_per_run) || 10,
+		preferred_search: String(row?.preferred_search || ''),
+		preferred_remote: normalizeRemoteFilter(row?.preferred_remote),
+		preferred_industries: parseJsonArray(row?.preferred_industries),
+		preferred_countries: parseJsonArray(row?.preferred_countries),
+		preferred_states: parseJsonArray(row?.preferred_states).map((state) => state.toUpperCase()),
+		preferred_counties: parseJsonArray(row?.preferred_counties),
+		instructions_for_agent: String(row?.instructions_for_agent || ''),
+	};
 }
 
 async function buildIndustryMatchersByKey(industryKeys) {
-  if (!Array.isArray(industryKeys) || industryKeys.length === 0) {
-    return new Map();
-  }
+	if (!Array.isArray(industryKeys) || industryKeys.length === 0) {
+		return new Map();
+	}
 
-  const [wordIndustryCoverage, phraseNgramIndustryCoverage] = await Promise.all([
-    getWordIndustryCoverageMap(),
-    getPhraseNgramIndustryCoverageMap()
-  ]);
+	const [wordIndustryCoverage, phraseNgramIndustryCoverage] = await Promise.all([
+		getWordIndustryCoverageMap(),
+		getPhraseNgramIndustryCoverageMap(),
+	]);
 
-  const placeholders = industryKeys.map(() => "?").join(", ");
-  let rows = [];
-  try {
-    rows = await db.all(
-      `
+	const placeholders = industryKeys.map(() => '?').join(', ');
+	let rows = [];
+	try {
+		rows = await db.all(
+			`
         SELECT industry_key, normalized_job_title
         FROM job_position_industry
         WHERE industry_key IN (${placeholders});
       `,
-      industryKeys
-    );
-  } catch {
-    return new Map();
-  }
+			industryKeys,
+		);
+	} catch {
+		return new Map();
+	}
 
-  const byIndustry = new Map();
-  for (const key of industryKeys) {
-    byIndustry.set(key, {
-      exactTitles: new Set(),
-      phraseNgrams: new Set(),
-      fallbackWords: new Set(),
-      wordCounts: new Map(),
-      phraseCounts: new Map()
-    });
-  }
+	const byIndustry = new Map();
+	for (const key of industryKeys) {
+		byIndustry.set(key, {
+			exactTitles: new Set(),
+			phraseNgrams: new Set(),
+			fallbackWords: new Set(),
+			wordCounts: new Map(),
+			phraseCounts: new Map(),
+		});
+	}
 
-  for (const row of rows) {
-    const key = String(row?.industry_key || "").trim();
-    if (!key || !byIndustry.has(key)) continue;
-    const normalizedTitle = normalizeLikeText(row?.normalized_job_title);
-    const words = createLikeParts(normalizedTitle);
-    const target = byIndustry.get(key);
-    if (normalizedTitle) {
-      target.exactTitles.add(normalizedTitle);
-    }
+	for (const row of rows) {
+		const key = String(row?.industry_key || '').trim();
+		if (!key || !byIndustry.has(key)) continue;
+		const normalizedTitle = normalizeLikeText(row?.normalized_job_title);
+		const words = createLikeParts(normalizedTitle);
+		const target = byIndustry.get(key);
+		if (normalizedTitle) {
+			target.exactTitles.add(normalizedTitle);
+		}
 
-    for (const word of new Set(words)) {
-      target.wordCounts.set(word, (target.wordCounts.get(word) || 0) + 1);
-    }
+		for (const word of new Set(words)) {
+			target.wordCounts.set(word, (target.wordCounts.get(word) || 0) + 1);
+		}
 
-    for (const ngram of new Set(buildWordNgrams(words, 2, 3))) {
-      target.phraseCounts.set(ngram, (target.phraseCounts.get(ngram) || 0) + 1);
-    }
-  }
+		for (const ngram of new Set(buildWordNgrams(words, 2, 3))) {
+			target.phraseCounts.set(ngram, (target.phraseCounts.get(ngram) || 0) + 1);
+		}
+	}
 
-  const finalized = new Map();
-  for (const [industryKey, matcher] of byIndustry.entries()) {
-    const fallbackWords = new Set();
-    for (const [word, count] of matcher.wordCounts.entries()) {
-      if (count < MIN_INDUSTRY_FALLBACK_WORD_COUNT) continue;
-      if (isWeakFallbackWord(word, wordIndustryCoverage)) continue;
-      fallbackWords.add(word);
-    }
+	const finalized = new Map();
+	for (const [industryKey, matcher] of byIndustry.entries()) {
+		const fallbackWords = new Set();
+		for (const [word, count] of matcher.wordCounts.entries()) {
+			if (count < MIN_INDUSTRY_FALLBACK_WORD_COUNT) continue;
+			if (isWeakFallbackWord(word, wordIndustryCoverage)) continue;
+			fallbackWords.add(word);
+		}
 
-    const phraseNgrams = new Set();
-    for (const [ngram, count] of matcher.phraseCounts.entries()) {
-      if (count < MIN_INDUSTRY_PHRASE_NGRAM_COUNT) continue;
-      if (isWeakPhraseNgram(ngram, phraseNgramIndustryCoverage)) continue;
-      phraseNgrams.add(ngram);
-    }
+		const phraseNgrams = new Set();
+		for (const [ngram, count] of matcher.phraseCounts.entries()) {
+			if (count < MIN_INDUSTRY_PHRASE_NGRAM_COUNT) continue;
+			if (isWeakPhraseNgram(ngram, phraseNgramIndustryCoverage)) continue;
+			phraseNgrams.add(ngram);
+		}
 
-    finalized.set(industryKey, {
-      exactTitles: matcher.exactTitles,
-      phraseNgrams,
-      fallbackWords
-    });
-  }
+		finalized.set(industryKey, {
+			exactTitles: matcher.exactTitles,
+			phraseNgrams,
+			fallbackWords,
+		});
+	}
 
-  return finalized;
+	return finalized;
 }
 
 async function getWordIndustryCoverageMap() {
-  if (wordIndustryCoverageCache instanceof Map) {
-    return wordIndustryCoverageCache;
-  }
+	if (wordIndustryCoverageCache instanceof Map) {
+		return wordIndustryCoverageCache;
+	}
 
-  let rows = [];
-  try {
-    rows = await db.all(
-      `
+	let rows = [];
+	try {
+		rows = await db.all(
+			`
         SELECT industry_key, normalized_job_title
         FROM job_position_industry;
-      `
-    );
-  } catch {
-    wordIndustryCoverageCache = new Map();
-    return wordIndustryCoverageCache;
-  }
+      `,
+		);
+	} catch {
+		wordIndustryCoverageCache = new Map();
+		return wordIndustryCoverageCache;
+	}
 
-  const wordIndustrySets = new Map();
-  for (const row of rows) {
-    const industryKey = String(row?.industry_key || "").trim();
-    if (!industryKey) continue;
+	const wordIndustrySets = new Map();
+	for (const row of rows) {
+		const industryKey = String(row?.industry_key || '').trim();
+		if (!industryKey) continue;
 
-    const words = new Set(createLikeParts(row?.normalized_job_title));
-    for (const word of words) {
-      if (!wordIndustrySets.has(word)) {
-        wordIndustrySets.set(word, new Set());
-      }
-      wordIndustrySets.get(word).add(industryKey);
-    }
-  }
+		const words = new Set(createLikeParts(row?.normalized_job_title));
+		for (const word of words) {
+			if (!wordIndustrySets.has(word)) {
+				wordIndustrySets.set(word, new Set());
+			}
+			wordIndustrySets.get(word).add(industryKey);
+		}
+	}
 
-  const coverageMap = new Map();
-  for (const [word, keys] of wordIndustrySets.entries()) {
-    coverageMap.set(word, keys.size);
-  }
+	const coverageMap = new Map();
+	for (const [word, keys] of wordIndustrySets.entries()) {
+		coverageMap.set(word, keys.size);
+	}
 
-  wordIndustryCoverageCache = coverageMap;
-  return coverageMap;
+	wordIndustryCoverageCache = coverageMap;
+	return coverageMap;
 }
 
 async function getPhraseNgramIndustryCoverageMap() {
-  if (phraseNgramIndustryCoverageCache instanceof Map) {
-    return phraseNgramIndustryCoverageCache;
-  }
+	if (phraseNgramIndustryCoverageCache instanceof Map) {
+		return phraseNgramIndustryCoverageCache;
+	}
 
-  let rows = [];
-  try {
-    rows = await db.all(
-      `
+	let rows = [];
+	try {
+		rows = await db.all(
+			`
         SELECT industry_key, normalized_job_title
         FROM job_position_industry;
-      `
-    );
-  } catch {
-    phraseNgramIndustryCoverageCache = new Map();
-    return phraseNgramIndustryCoverageCache;
-  }
+      `,
+		);
+	} catch {
+		phraseNgramIndustryCoverageCache = new Map();
+		return phraseNgramIndustryCoverageCache;
+	}
 
-  const ngramIndustrySets = new Map();
-  for (const row of rows) {
-    const industryKey = String(row?.industry_key || "").trim();
-    if (!industryKey) continue;
+	const ngramIndustrySets = new Map();
+	for (const row of rows) {
+		const industryKey = String(row?.industry_key || '').trim();
+		if (!industryKey) continue;
 
-    const words = createLikeParts(row?.normalized_job_title);
-    const ngrams = new Set(buildWordNgrams(words, 2, 3));
-    for (const ngram of ngrams) {
-      if (!ngramIndustrySets.has(ngram)) {
-        ngramIndustrySets.set(ngram, new Set());
-      }
-      ngramIndustrySets.get(ngram).add(industryKey);
-    }
-  }
+		const words = createLikeParts(row?.normalized_job_title);
+		const ngrams = new Set(buildWordNgrams(words, 2, 3));
+		for (const ngram of ngrams) {
+			if (!ngramIndustrySets.has(ngram)) {
+				ngramIndustrySets.set(ngram, new Set());
+			}
+			ngramIndustrySets.get(ngram).add(industryKey);
+		}
+	}
 
-  const coverageMap = new Map();
-  for (const [ngram, keys] of ngramIndustrySets.entries()) {
-    coverageMap.set(ngram, keys.size);
-  }
+	const coverageMap = new Map();
+	for (const [ngram, keys] of ngramIndustrySets.entries()) {
+		coverageMap.set(ngram, keys.size);
+	}
 
-  phraseNgramIndustryCoverageCache = coverageMap;
-  return coverageMap;
+	phraseNgramIndustryCoverageCache = coverageMap;
+	return coverageMap;
 }
 
 function isWeakFallbackWord(word, wordIndustryCoverage) {
-  if (!word) return true;
-  if (WEAK_INDUSTRY_LIKE_PARTS.has(word)) return true;
-  const industryCoverage = Number(wordIndustryCoverage?.get(word) || 0);
-  return industryCoverage >= FALLBACK_WORD_INDUSTRY_COVERAGE_THRESHOLD;
+	if (!word) return true;
+	if (WEAK_INDUSTRY_LIKE_PARTS.has(word)) return true;
+	const industryCoverage = Number(wordIndustryCoverage?.get(word) || 0);
+	return industryCoverage >= FALLBACK_WORD_INDUSTRY_COVERAGE_THRESHOLD;
 }
 
 function isWeakPhraseNgram(ngram, phraseNgramIndustryCoverage) {
-  if (!ngram) return true;
-  const parts = ngram.split(" ").map((part) => part.trim()).filter(Boolean);
-  if (parts.length < 2) return true;
-  if (parts.every((part) => WEAK_INDUSTRY_LIKE_PARTS.has(part))) return true;
-  const industryCoverage = Number(phraseNgramIndustryCoverage?.get(ngram) || 0);
-  return industryCoverage >= PHRASE_NGRAM_INDUSTRY_COVERAGE_THRESHOLD;
+	if (!ngram) return true;
+	const parts = ngram
+		.split(' ')
+		.map((part) => part.trim())
+		.filter(Boolean);
+	if (parts.length < 2) return true;
+	if (parts.every((part) => WEAK_INDUSTRY_LIKE_PARTS.has(part))) return true;
+	const industryCoverage = Number(phraseNgramIndustryCoverage?.get(ngram) || 0);
+	return industryCoverage >= PHRASE_NGRAM_INDUSTRY_COVERAGE_THRESHOLD;
 }
 
 function rowMatchesIndustryLikeParts(positionName, selectedIndustryKeys, industryMatchersByKey) {
-  if (!Array.isArray(selectedIndustryKeys) || selectedIndustryKeys.length === 0) return true;
-  if (!(industryMatchersByKey instanceof Map) || industryMatchersByKey.size === 0) return false;
+	if (!Array.isArray(selectedIndustryKeys) || selectedIndustryKeys.length === 0) return true;
+	if (!(industryMatchersByKey instanceof Map) || industryMatchersByKey.size === 0) return false;
 
-  const titleText = String(positionName || "");
-  const selectedKeySet = new Set(
-    selectedIndustryKeys.map((key) => String(key || "").trim().toLowerCase()).filter(Boolean)
-  );
-  const isSalesExclusiveRole = SALES_EXCLUSIVE_ROLE_REGEX.test(titleText);
-  if (isSalesExclusiveRole && !selectedKeySet.has(SALES_BUSINESS_INDUSTRY_KEY)) {
-    return false;
-  }
+	const titleText = String(positionName || '');
+	const selectedKeySet = new Set(
+		selectedIndustryKeys
+			.map((key) =>
+				String(key || '')
+					.trim()
+					.toLowerCase(),
+			)
+			.filter(Boolean),
+	);
+	const isSalesExclusiveRole = SALES_EXCLUSIVE_ROLE_REGEX.test(titleText);
+	if (isSalesExclusiveRole && !selectedKeySet.has(SALES_BUSINESS_INDUSTRY_KEY)) {
+		return false;
+	}
 
-  const normalizedPosition = normalizeLikeText(positionName);
-  const postingWords = createLikeParts(positionName);
-  if (postingWords.length === 0) return false;
-  const postingWordSet = new Set(postingWords);
-  const postingPhraseSet = new Set(buildWordNgrams(postingWords, 2, 3));
+	const normalizedPosition = normalizeLikeText(positionName);
+	const postingWords = createLikeParts(positionName);
+	if (postingWords.length === 0) return false;
+	const postingWordSet = new Set(postingWords);
+	const postingPhraseSet = new Set(buildWordNgrams(postingWords, 2, 3));
 
-  for (const industryKey of selectedIndustryKeys) {
-    const matcher = industryMatchersByKey.get(industryKey);
-    const exactTitles = matcher?.exactTitles;
-    const phraseNgrams = matcher?.phraseNgrams;
-    const fallbackWords = matcher?.fallbackWords;
-    const hasMatcherData =
-      exactTitles instanceof Set || phraseNgrams instanceof Set || fallbackWords instanceof Set;
-    if (!hasMatcherData) continue;
+	for (const industryKey of selectedIndustryKeys) {
+		const matcher = industryMatchersByKey.get(industryKey);
+		const exactTitles = matcher?.exactTitles;
+		const phraseNgrams = matcher?.phraseNgrams;
+		const fallbackWords = matcher?.fallbackWords;
+		const hasMatcherData =
+			exactTitles instanceof Set || phraseNgrams instanceof Set || fallbackWords instanceof Set;
+		if (!hasMatcherData) continue;
 
-    if (exactTitles instanceof Set && normalizedPosition && exactTitles.has(normalizedPosition)) {
-      if (industryKey === IT_SOFTWARE_INDUSTRY_KEY && IT_SALES_GTM_ROLE_REGEX.test(titleText)) {
-        continue;
-      }
+		if (exactTitles instanceof Set && normalizedPosition && exactTitles.has(normalizedPosition)) {
+			if (industryKey === IT_SOFTWARE_INDUSTRY_KEY && IT_SALES_GTM_ROLE_REGEX.test(titleText)) {
+				continue;
+			}
 
-      const hasStrongPhrase =
-        phraseNgrams instanceof Set &&
-        Array.from(postingPhraseSet).some((postingPhrase) => phraseNgrams.has(postingPhrase));
-      const hasStrongWord =
-        fallbackWords instanceof Set &&
-        Array.from(postingWordSet).some((word) => fallbackWords.has(word));
-      if (hasStrongPhrase || hasStrongWord) {
-        return true;
-      }
-      if (
-        industryKey === IT_SOFTWARE_INDUSTRY_KEY &&
-        Array.from(postingWordSet).some((word) => IT_HIGH_SIGNAL_ANCHOR_PARTS.has(word))
-      ) {
-        return true;
-      }
-    }
+			const hasStrongPhrase =
+				phraseNgrams instanceof Set &&
+				Array.from(postingPhraseSet).some((postingPhrase) => phraseNgrams.has(postingPhrase));
+			const hasStrongWord =
+				fallbackWords instanceof Set &&
+				Array.from(postingWordSet).some((word) => fallbackWords.has(word));
+			if (hasStrongPhrase || hasStrongWord) {
+				return true;
+			}
+			if (
+				industryKey === IT_SOFTWARE_INDUSTRY_KEY &&
+				Array.from(postingWordSet).some((word) => IT_HIGH_SIGNAL_ANCHOR_PARTS.has(word))
+			) {
+				return true;
+			}
+		}
 
-    if (industryKey === IT_SOFTWARE_INDUSTRY_KEY) {
-      if (IT_SALES_GTM_ROLE_REGEX.test(titleText)) continue;
-      const hasTechAnchor = Array.from(postingWordSet).some((part) => IT_TECH_ANCHOR_PARTS.has(part));
-      if (!hasTechAnchor) continue;
-    }
+		if (industryKey === IT_SOFTWARE_INDUSTRY_KEY) {
+			if (IT_SALES_GTM_ROLE_REGEX.test(titleText)) continue;
+			const hasTechAnchor = Array.from(postingWordSet).some((part) =>
+				IT_TECH_ANCHOR_PARTS.has(part),
+			);
+			if (!hasTechAnchor) continue;
+		}
 
-    if (phraseNgrams instanceof Set && phraseNgrams.size > 0) {
-      for (const postingPhrase of postingPhraseSet) {
-        if (phraseNgrams.has(postingPhrase)) {
-          return true;
-        }
-      }
-    }
+		if (phraseNgrams instanceof Set && phraseNgrams.size > 0) {
+			for (const postingPhrase of postingPhraseSet) {
+				if (phraseNgrams.has(postingPhrase)) {
+					return true;
+				}
+			}
+		}
 
-    if (fallbackWords instanceof Set && fallbackWords.size > 0) {
-      for (const word of postingWordSet) {
-        if (fallbackWords.has(word)) {
-          if (
-            industryKey !== IT_SOFTWARE_INDUSTRY_KEY ||
-            postingWordSet.size === 1 ||
-            IT_HIGH_SIGNAL_ANCHOR_PARTS.has(word)
-          ) {
-            return true;
-          }
-        }
-      }
-    }
+		if (fallbackWords instanceof Set && fallbackWords.size > 0) {
+			for (const word of postingWordSet) {
+				if (fallbackWords.has(word)) {
+					if (
+						industryKey !== IT_SOFTWARE_INDUSTRY_KEY ||
+						postingWordSet.size === 1 ||
+						IT_HIGH_SIGNAL_ANCHOR_PARTS.has(word)
+					) {
+						return true;
+					}
+				}
+			}
+		}
 
-    if (industryKey === IT_SOFTWARE_INDUSTRY_KEY) {
-      for (const word of postingWordSet) {
-        if (IT_HIGH_SIGNAL_ANCHOR_PARTS.has(word) && fallbackWords instanceof Set && fallbackWords.has(word)) {
-          return true;
-        }
-      }
-    }
-  }
-  return false;
+		if (industryKey === IT_SOFTWARE_INDUSTRY_KEY) {
+			for (const word of postingWordSet) {
+				if (
+					IT_HIGH_SIGNAL_ANCHOR_PARTS.has(word) &&
+					fallbackWords instanceof Set &&
+					fallbackWords.has(word)
+				) {
+					return true;
+				}
+			}
+		}
+	}
+	return false;
 }
 
 async function getAppliedStateByUrl(urls) {
-  const uniqueUrls = Array.from(new Set((urls || []).map((url) => String(url || "").trim()).filter(Boolean)));
-  if (uniqueUrls.length === 0) return new Map();
+	const uniqueUrls = Array.from(
+		new Set((urls || []).map((url) => String(url || '').trim()).filter(Boolean)),
+	);
+	if (uniqueUrls.length === 0) return new Map();
 
-  const map = new Map();
-  const chunkSize = 800;
-  for (let i = 0; i < uniqueUrls.length; i += chunkSize) {
-    const chunk = uniqueUrls.slice(i, i + chunkSize);
-    const placeholders = chunk.map(() => "?").join(", ");
-    const rows = await db.all(
-      `
+	const map = new Map();
+	const chunkSize = 800;
+	for (let i = 0; i < uniqueUrls.length; i += chunkSize) {
+		const chunk = uniqueUrls.slice(i, i + chunkSize);
+		const placeholders = chunk.map(() => '?').join(', ');
+		const rows = await db.all(
+			`
         SELECT
           job_posting_url,
           applied,
@@ -1421,167 +1713,187 @@ async function getAppliedStateByUrl(urls) {
         FROM posting_application_state
         WHERE job_posting_url IN (${placeholders});
       `,
-      chunk
-    );
+			chunk,
+		);
 
-    for (const row of rows) {
-      map.set(String(row?.job_posting_url || "").trim(), row);
-    }
-  }
-  return map;
+		for (const row of rows) {
+			map.set(String(row?.job_posting_url || '').trim(), row);
+		}
+	}
+	return map;
 }
 
 async function findCandidates(options = {}) {
-  const settings = await getMcpSettings();
-  ensureMcpAgentEnabled(settings);
-  const atsFilters = normalizeAtsFilters(options.ats);
-  const industries =
-    Array.isArray(options.industries) && options.industries.length > 0
-      ? options.industries
-      : settings.preferred_industries || [];
-  const states =
-    Array.isArray(options.states) && options.states.length > 0 ? options.states : settings.preferred_states || [];
-  const counties =
-    Array.isArray(options.counties) && options.counties.length > 0
-      ? options.counties
-      : settings.preferred_counties || [];
-  const remote = options.remote ? normalizeRemoteFilter(options.remote) : settings.preferred_remote;
-  const search = String(options.search || settings.preferred_search || "").trim().toLowerCase();
-  const includeApplied = normalizeBoolean(options.include_applied, false);
-  const limit = Math.max(
-    1,
-    Math.min(2000, parseNonNegativeInteger(options.limit) || parseNonNegativeInteger(settings.max_applications_per_run) || 10)
-  );
+	const settings = await getMcpSettings();
+	ensureMcpAgentEnabled(settings);
+	const atsFilters = normalizeAtsFilters(options.ats);
+	const industries =
+		Array.isArray(options.industries) && options.industries.length > 0
+			? options.industries
+			: settings.preferred_industries || [];
+	const states =
+		Array.isArray(options.states) && options.states.length > 0
+			? options.states
+			: settings.preferred_states || [];
+	const counties =
+		Array.isArray(options.counties) && options.counties.length > 0
+			? options.counties
+			: settings.preferred_counties || [];
+	const remote = options.remote ? normalizeRemoteFilter(options.remote) : settings.preferred_remote;
+	const countries = settings.preferred_countries || [];
+	const search = String(options.search || settings.preferred_search || '')
+		.trim()
+		.toLowerCase();
+	const includeApplied = normalizeBoolean(options.include_applied, false);
+	const limit = Math.max(
+		1,
+		Math.min(
+			2000,
+			parseNonNegativeInteger(options.limit) ||
+				parseNonNegativeInteger(settings.max_applications_per_run) ||
+				10,
+		),
+	);
 
-  const rows = await db.all(
-    `
-      SELECT id, company_name, position_name, job_posting_url, posting_date
+	const rows = await db.all(
+		`
+      SELECT id, company_name, position_name, job_posting_url, posting_date, location
       FROM Postings
       ORDER BY company_name ASC, position_name ASC;
-    `
-  );
+    `,
+	);
 
-  const industryMatchersByKey = await buildIndustryMatchersByKey(industries);
-  const countyFilters = parseCountyFilters(counties);
-  const searchTerms = search.split(/\s+/).filter(Boolean);
-  const stateCodes = states.map((state) => String(state || "").trim().toUpperCase()).filter(Boolean);
+	const industryMatchersByKey = await buildIndustryMatchersByKey(industries);
+	const countyFilters = parseCountyFilters(counties);
+	const searchTerms = search.split(/\s+/).filter(Boolean);
+	const stateCodes = states
+		.map((state) =>
+			String(state || '')
+				.trim()
+				.toUpperCase(),
+		)
+		.filter(Boolean);
 
-  let items = rows
-    .map((row) => ({
-      ...row,
-      location: inferLocationFromJobUrl(row?.job_posting_url),
-      ats: inferAtsFromJobPostingUrl(row?.job_posting_url)
-    }))
-    .filter((row) => {
-      const companyName = String(row?.company_name || "").toLowerCase();
-      const positionName = String(row?.position_name || "").toLowerCase();
-      const location = String(row?.location || "").toLowerCase();
-      const ats = String(row?.ats || "").toLowerCase();
+	let items = rows
+		.map((row) => ({
+			...row,
+			location: String(row?.location || '').trim() || inferLocationFromJobUrl(row?.job_posting_url),
+			ats: inferAtsFromJobPostingUrl(row?.job_posting_url),
+		}))
+		.filter((row) => {
+			const companyName = String(row?.company_name || '').toLowerCase();
+			const positionName = String(row?.position_name || '').toLowerCase();
+			const location = String(row?.location || '').toLowerCase();
+			const ats = String(row?.ats || '').toLowerCase();
 
-      const matchesSearch = searchTerms.every(
-        (term) => companyName.includes(term) || positionName.includes(term) || location.includes(term)
-      );
-      if (!matchesSearch) return false;
+			const matchesSearch = searchTerms.every(
+				(term) =>
+					companyName.includes(term) || positionName.includes(term) || location.includes(term),
+			);
+			if (!matchesSearch) return false;
 
-      if (atsFilters.length > 0 && !atsFilters.includes(ats)) return false;
+			if (atsFilters.length > 0 && !atsFilters.includes(ats)) return false;
 
-      const matchesIndustry = rowMatchesIndustryLikeParts(
-        row?.position_name,
-        industries,
-        industryMatchersByKey
-      );
-      if (!matchesIndustry) return false;
+			const matchesIndustry = rowMatchesIndustryLikeParts(
+				row?.position_name,
+				industries,
+				industryMatchersByKey,
+			);
+			if (!matchesIndustry) return false;
 
-      const matchesLocation = rowMatchesLocationFilters(row?.location, stateCodes, countyFilters);
-      if (!matchesLocation) return false;
+			const matchesLocation = rowMatchesLocationFilters(row?.location, stateCodes, countyFilters);
+			if (!matchesLocation) return false;
 
-      const matchesRemote = rowMatchesRemoteFilter(row?.location, remote);
-      if (!matchesRemote) return false;
+			if (!rowMatchesCountryFilters(row?.location, countries)) return false;
 
-      return true;
-    });
+			const matchesRemote = rowMatchesRemoteFilter(row?.location, remote);
+			if (!matchesRemote) return false;
 
-  const appliedByUrl = await getAppliedStateByUrl(items.map((item) => item.job_posting_url));
-  items = items.map((item) => {
-    const state = appliedByUrl.get(String(item?.job_posting_url || "").trim());
-    return {
-      ...item,
-      applied: Boolean(Number(state?.applied || 0)),
-      ignored: Boolean(Number(state?.ignored || 0)),
-      applied_by_label: String(state?.applied_by_label || ""),
-      applied_at_epoch: Number(state?.applied_at_epoch || 0)
-    };
-  });
+			return true;
+		});
 
-  items = items.filter((item) => !item.ignored);
+	const appliedByUrl = await getAppliedStateByUrl(items.map((item) => item.job_posting_url));
+	items = items.map((item) => {
+		const state = appliedByUrl.get(String(item?.job_posting_url || '').trim());
+		return {
+			...item,
+			applied: Boolean(Number(state?.applied || 0)),
+			ignored: Boolean(Number(state?.ignored || 0)),
+			applied_by_label: String(state?.applied_by_label || ''),
+			applied_at_epoch: Number(state?.applied_at_epoch || 0),
+		};
+	});
 
-  if (!includeApplied) {
-    items = items.filter((item) => !item.applied);
-  }
+	items = items.filter((item) => !item.ignored);
 
-  items = items.slice(0, limit);
-  return {
-    filters: {
-      search,
-      ats: atsFilters,
-      industries,
-      states: stateCodes,
-      counties,
-      remote
-    },
-    count: items.length,
-    items
-  };
+	if (!includeApplied) {
+		items = items.filter((item) => !item.applied);
+	}
+
+	items = items.slice(0, limit);
+	return {
+		filters: {
+			search,
+			ats: atsFilters,
+			industries,
+			countries,
+			states: stateCodes,
+			counties,
+			remote,
+		},
+		count: items.length,
+		items,
+	};
 }
 
 async function resolveCompanyIdForApplication(companyName) {
-  const normalized = normalizeLikeText(companyName);
-  if (!normalized) return null;
+	const normalized = normalizeLikeText(companyName);
+	if (!normalized) return null;
 
-  return db.get(
-    `
+	return db.get(
+		`
       SELECT id
       FROM companies
       WHERE LOWER(company_name) = ?
       ORDER BY id ASC
       LIMIT 1;
     `,
-    [normalized]
-  );
+		[normalized],
+	);
 }
 
 async function resolveCompanyIdFromPostingUrl(jobPostingUrl) {
-  const normalizedUrl = String(jobPostingUrl || "").trim();
-  if (!normalizedUrl) return null;
+	const normalizedUrl = String(jobPostingUrl || '').trim();
+	if (!normalizedUrl) return null;
 
-  const posting = await db.get(
-    `
+	const posting = await db.get(
+		`
       SELECT company_name
       FROM Postings
       WHERE job_posting_url = ?
       LIMIT 1;
     `,
-    [normalizedUrl]
-  );
+		[normalizedUrl],
+	);
 
-  const normalizedCompanyName = normalizeLikeText(posting?.company_name);
-  if (!normalizedCompanyName) return null;
+	const normalizedCompanyName = normalizeLikeText(posting?.company_name);
+	if (!normalizedCompanyName) return null;
 
-  return db.get(
-    `
+	return db.get(
+		`
       SELECT id
       FROM companies
       WHERE LOWER(company_name) = ?
       ORDER BY id ASC
       LIMIT 1;
     `,
-    [normalizedCompanyName]
-  );
+		[normalizedCompanyName],
+	);
 }
 
 async function getApplicationById(applicationId) {
-  const row = await db.get(
-    `
+	const row = await db.get(
+		`
       SELECT
         a.id,
         a.company_id,
@@ -1599,72 +1911,77 @@ async function getApplicationById(applicationId) {
       WHERE a.id = ?
       LIMIT 1;
     `,
-    [applicationId]
-  );
-  if (!row) return null;
+		[applicationId],
+	);
+	if (!row) return null;
 
-  return {
-    id: Number(row?.id || 0),
-    company_id: Number(row?.company_id || 0),
-    company_name: String(row?.company_name || "").trim(),
-    position_name: String(row?.position_name || "").trim(),
-    job_posting_url: "",
-    application_date: Number(row?.application_date || 0),
-    status: String(row?.status || "applied").trim().toLowerCase() || "applied",
-    applied_by_type: normalizeAppliedByType(row?.applied_by_type),
-    applied_by_label: normalizeAppliedByLabel(row?.applied_by_label, row?.applied_by_type)
-  };
+	return {
+		id: Number(row?.id || 0),
+		company_id: Number(row?.company_id || 0),
+		company_name: String(row?.company_name || '').trim(),
+		position_name: String(row?.position_name || '').trim(),
+		job_posting_url: '',
+		application_date: Number(row?.application_date || 0),
+		status:
+			String(row?.status || 'applied')
+				.trim()
+				.toLowerCase() || 'applied',
+		applied_by_type: normalizeAppliedByType(row?.applied_by_type),
+		applied_by_label: normalizeAppliedByLabel(row?.applied_by_label, row?.applied_by_type),
+	};
 }
 
 async function getExistingAppliedApplicationByPostingUrl(jobPostingUrl) {
-  const normalizedUrl = String(jobPostingUrl || "").trim();
-  if (!normalizedUrl) return null;
+	const normalizedUrl = String(jobPostingUrl || '').trim();
+	if (!normalizedUrl) return null;
 
-  const state = await db.get(
-    `
+	const state = await db.get(
+		`
       SELECT last_application_id
       FROM posting_application_state
       WHERE job_posting_url = ?
         AND COALESCE(applied, 0) = 1
       LIMIT 1;
     `,
-    [normalizedUrl]
-  );
-  const lastApplicationId = parseNonNegativeInteger(state?.last_application_id);
-  if (!lastApplicationId) return null;
+		[normalizedUrl],
+	);
+	const lastApplicationId = parseNonNegativeInteger(state?.last_application_id);
+	if (!lastApplicationId) return null;
 
-  const existing = await getApplicationById(lastApplicationId);
-  if (!existing) return null;
-  return {
-    ...existing,
-    job_posting_url: normalizedUrl
-  };
+	const existing = await getApplicationById(lastApplicationId);
+	if (!existing) return null;
+	return {
+		...existing,
+		job_posting_url: normalizedUrl,
+	};
 }
 
-function buildCoverLetterDraft(personalInformation, posting, instructions = "") {
-  const firstName = String(personalInformation?.first_name || "").trim() || "Applicant";
-  const lastName = String(personalInformation?.last_name || "").trim();
-  const fullName = `${firstName}${lastName ? ` ${lastName}` : ""}`.trim();
-  const yearsOfExperience = parseNonNegativeInteger(personalInformation?.years_of_experience);
-  const positionName = String(posting?.position_name || "the role").trim();
-  const companyName = String(posting?.company_name || "your company").trim();
-  const linkedinUrl = String(personalInformation?.linkedin_url || "").trim();
-  const githubUrl = String(personalInformation?.github_url || "").trim();
-  const portfolioUrl = String(personalInformation?.portfolio_url || "").trim();
-  const extraInstructions = String(instructions || "").trim();
+function buildCoverLetterDraft(personalInformation, posting, instructions = '') {
+	const firstName = String(personalInformation?.first_name || '').trim() || 'Applicant';
+	const lastName = String(personalInformation?.last_name || '').trim();
+	const fullName = `${firstName}${lastName ? ` ${lastName}` : ''}`.trim();
+	const yearsOfExperience = parseNonNegativeInteger(personalInformation?.years_of_experience);
+	const positionName = String(posting?.position_name || 'the role').trim();
+	const companyName = String(posting?.company_name || 'your company').trim();
+	const linkedinUrl = String(personalInformation?.linkedin_url || '').trim();
+	const githubUrl = String(personalInformation?.github_url || '').trim();
+	const portfolioUrl = String(personalInformation?.portfolio_url || '').trim();
+	const extraInstructions = String(instructions || '').trim();
 
-  const details = [];
-  if (yearsOfExperience > 0) details.push(`${yearsOfExperience}+ years of relevant experience`);
-  if (linkedinUrl) details.push(`LinkedIn: ${linkedinUrl}`);
-  if (githubUrl) details.push(`GitHub: ${githubUrl}`);
-  if (portfolioUrl) details.push(`Portfolio: ${portfolioUrl}`);
-  const detailSentence =
-    details.length > 0
-      ? `My background includes ${details.join(", ")}.`
-      : "My background aligns with fast-paced, delivery-focused teams.";
-  const instructionSentence = extraInstructions ? `I am especially aligned with: ${extraInstructions}.` : "";
+	const details = [];
+	if (yearsOfExperience > 0) details.push(`${yearsOfExperience}+ years of relevant experience`);
+	if (linkedinUrl) details.push(`LinkedIn: ${linkedinUrl}`);
+	if (githubUrl) details.push(`GitHub: ${githubUrl}`);
+	if (portfolioUrl) details.push(`Portfolio: ${portfolioUrl}`);
+	const detailSentence =
+		details.length > 0
+			? `My background includes ${details.join(', ')}.`
+			: 'My background aligns with fast-paced, delivery-focused teams.';
+	const instructionSentence = extraInstructions
+		? `I am especially aligned with: ${extraInstructions}.`
+		: '';
 
-  return `Dear Hiring Team,
+	return `Dear Hiring Team,
 
 I am excited to apply for the ${positionName} role at ${companyName}. ${detailSentence}
 
@@ -1677,39 +1994,44 @@ ${fullName}`.trim();
 }
 
 function asToolResult(payload) {
-  return {
-    content: [{ type: "text", text: JSON.stringify(payload, null, 2) }],
-    structuredContent: payload
-  };
+	return {
+		content: [{ type: 'text', text: JSON.stringify(payload, null, 2) }],
+		structuredContent: payload,
+	};
 }
 
 async function createApplicationFromAgent(input) {
-  const companyName = String(input?.company_name || "").trim();
-  const positionName = String(input?.position_name || "").trim();
-  const jobPostingUrl = String(input?.job_posting_url || "").trim();
-  const appliedByLabel = String(input?.applied_by_label || "").trim() || "AI agent applied on behalf of user";
-  const applicationDate = parseNonNegativeInteger(input?.application_date) || nowEpochSeconds();
-  const status = String(input?.status || "applied").trim().toLowerCase() || "applied";
+	const companyName = String(input?.company_name || '').trim();
+	const positionName = String(input?.position_name || '').trim();
+	const jobPostingUrl = String(input?.job_posting_url || '').trim();
+	const appliedByLabel =
+		String(input?.applied_by_label || '').trim() || 'AI agent applied on behalf of user';
+	const applicationDate = parseNonNegativeInteger(input?.application_date) || nowEpochSeconds();
+	const status =
+		String(input?.status || 'applied')
+			.trim()
+			.toLowerCase() || 'applied';
 
-  if (jobPostingUrl) {
-    const existing = await getExistingAppliedApplicationByPostingUrl(jobPostingUrl);
-    if (existing) return existing;
-  }
+	if (jobPostingUrl) {
+		const existing = await getExistingAppliedApplicationByPostingUrl(jobPostingUrl);
+		if (existing) return existing;
+	}
 
-  const companyFromPosting = await resolveCompanyIdFromPostingUrl(jobPostingUrl);
-  const company = companyFromPosting || (companyName ? await resolveCompanyIdForApplication(companyName) : null);
-  if (!company?.id) {
-    throw new Error(
-      jobPostingUrl
-        ? `Unable to resolve company_id for job_posting_url='${jobPostingUrl}'`
-        : `Unable to resolve company_id for company_name='${companyName}'`
-    );
-  }
+	const companyFromPosting = await resolveCompanyIdFromPostingUrl(jobPostingUrl);
+	const company =
+		companyFromPosting || (companyName ? await resolveCompanyIdForApplication(companyName) : null);
+	if (!company?.id) {
+		throw new Error(
+			jobPostingUrl
+				? `Unable to resolve company_id for job_posting_url='${jobPostingUrl}'`
+				: `Unable to resolve company_id for company_name='${companyName}'`,
+		);
+	}
 
-  await db.exec("BEGIN TRANSACTION;");
-  try {
-    const result = await db.run(
-      `
+	await db.exec('BEGIN TRANSACTION;');
+	try {
+		const result = await db.run(
+			`
         INSERT INTO applications (
           company_id,
           position_name,
@@ -1717,11 +2039,11 @@ async function createApplicationFromAgent(input) {
           status
         ) VALUES (?, ?, ?, ?);
       `,
-      [company.id, positionName, applicationDate, status]
-    );
+			[company.id, positionName, applicationDate, status],
+		);
 
-    await db.run(
-      `
+		await db.run(
+			`
         INSERT INTO application_attribution (
           application_id,
           applied_by_type,
@@ -1733,12 +2055,12 @@ async function createApplicationFromAgent(input) {
           applied_by_label = excluded.applied_by_label,
           updated_at = datetime('now');
       `,
-      [result.lastID, "agent", appliedByLabel]
-    );
+			[result.lastID, 'agent', appliedByLabel],
+		);
 
-    if (jobPostingUrl) {
-      await db.run(
-        `
+		if (jobPostingUrl) {
+			await db.run(
+				`
           INSERT INTO posting_application_state (
             job_posting_url,
             applied,
@@ -1756,238 +2078,379 @@ async function createApplicationFromAgent(input) {
             last_application_id = excluded.last_application_id,
             updated_at = datetime('now');
         `,
-        [jobPostingUrl, appliedByLabel, applicationDate, result.lastID]
-      );
-    }
+				[jobPostingUrl, appliedByLabel, applicationDate, result.lastID],
+			);
+		}
 
-    await db.exec("COMMIT;");
-    return {
-      id: result.lastID,
-      company_id: company.id,
-      company_name: companyName,
-      position_name: positionName,
-      job_posting_url: jobPostingUrl,
-      application_date: applicationDate,
-      status,
-      applied_by_type: "agent",
-      applied_by_label: appliedByLabel
-    };
-  } catch (error) {
-    await db.exec("ROLLBACK;");
-    throw error;
-  }
+		await db.exec('COMMIT;');
+		return {
+			id: result.lastID,
+			company_id: company.id,
+			company_name: companyName,
+			position_name: positionName,
+			job_posting_url: jobPostingUrl,
+			application_date: applicationDate,
+			status,
+			applied_by_type: 'agent',
+			applied_by_label: appliedByLabel,
+		};
+	} catch (error) {
+		await db.exec('ROLLBACK;');
+		throw error;
+	}
 }
 
-async function main() {
-  await openDatabase();
+async function setPostingIgnoredStateForAgent(input) {
+	const jobPostingUrl = String(input?.job_posting_url || '').trim();
+	if (!jobPostingUrl) {
+		throw new Error('job_posting_url is required.');
+	}
 
-  const mcpServer = new McpServer({
-    name: "openpostings-apply-agent",
-    version: "1.0.0"
-  });
+	const ignored = normalizeBoolean(input?.ignored, true);
+	const ignoredAtEpoch = parseNonNegativeInteger(input?.ignored_at_epoch) || nowEpochSeconds();
+	const ignoredByLabel = String(input?.ignored_by_label || 'AI agent').trim() || 'AI agent';
 
-  mcpServer.registerTool(
-    "get_applicant_context",
-    {
-      description: "Read applicantee information and MCP settings used by the apply agent."
-    },
-    async () => {
-      const personalInformation = await getPersonalInformation();
-      const mcpSettings = await getMcpSettings();
-      ensureMcpAgentEnabled(mcpSettings);
-      const runbook = {
-        summary:
-          "Use existing browser/web tools to apply through each posting URL, using applicant data for form fields and MCP login credentials for account/MFA flows.",
-        steps: [
-          "Load context and candidate postings.",
-          "Open posting URL in browser automation.",
-          "Fill application form with applicant data.",
-          "Use agent login email + password for account creation and sign-in when required.",
-          "Use the same agent login email for MFA/approval flows when required.",
-          "Generate and attach a posting-specific cover letter.",
-          "Call record_application_result after submit."
-        ]
-      };
-      return asToolResult({
-        personal_information: personalInformation,
-        mcp_settings: mcpSettings,
-        runbook
-      });
-    }
-  );
+	await db.run(
+		`
+			INSERT INTO posting_application_state (
+				job_posting_url,
+				applied,
+				applied_by_type,
+				applied_by_label,
+				applied_at_epoch,
+				last_application_id,
+				ignored,
+				ignored_at_epoch,
+				ignored_by_label,
+				updated_at
+			) VALUES (?, 0, 'manual', '', NULL, NULL, ?, ?, ?, datetime('now'))
+			ON CONFLICT(job_posting_url) DO UPDATE SET
+				ignored = excluded.ignored,
+				ignored_at_epoch = CASE WHEN excluded.ignored = 1 THEN excluded.ignored_at_epoch ELSE NULL END,
+				ignored_by_label = CASE WHEN excluded.ignored = 1 THEN excluded.ignored_by_label ELSE '' END,
+				updated_at = datetime('now');
+		`,
+		[jobPostingUrl, ignored ? 1 : 0, ignoredAtEpoch, ignoredByLabel],
+	);
 
-  mcpServer.registerTool(
-    "find_posting_candidates",
-    {
-      description:
-        "Find postings that match MCP preferences using search + industry/location/remote filters with like-parts industry matching.",
-      inputSchema: {
-        search: z.string().optional(),
-        ats: z
-          .union([
-            z.enum(MCP_ATS_FILTER_VALUES),
-            z.array(z.enum(MCP_ATS_FILTER_VALUES))
-          ])
-          .optional(),
-        industries: z.array(z.string()).optional(),
-        states: z.array(z.string()).optional(),
-        counties: z.array(z.string()).optional(),
-        remote: z.enum(["all", "remote", "hybrid", "non_remote"]).optional(),
-        include_applied: z.boolean().optional(),
-        limit: z.number().int().positive().max(2000).optional()
-      }
-    },
-    async (args) => {
-      const result = await findCandidates(args || {});
-      return asToolResult(result);
-    }
-  );
+	return {
+		job_posting_url: jobPostingUrl,
+		ignored,
+		ignored_at_epoch: ignored ? ignoredAtEpoch : 0,
+		ignored_by_label: ignored ? ignoredByLabel : '',
+	};
+}
 
-  mcpServer.registerTool(
-    "draft_cover_letter",
-    {
-      description: "Generate a cover letter draft for a posting using applicantee information.",
-      inputSchema: {
-        company_name: z.string().optional(),
-        position_name: z.string().optional(),
-        job_posting_url: z.string().optional(),
-        instructions: z.string().optional()
-      }
-    },
-    async (args) => {
-      const mcpSettings = await getMcpSettings();
-      ensureMcpAgentEnabled(mcpSettings);
-      const personalInformation = await getPersonalInformation();
-      let companyName = String(args?.company_name || "").trim();
-      let positionName = String(args?.position_name || "").trim();
-      const jobPostingUrl = String(args?.job_posting_url || "").trim();
+function buildMcpServer() {
+	const mcpServer = new McpServer({
+		name: 'openpostings-apply-agent',
+		version: '1.0.0',
+	});
 
-      if (jobPostingUrl && (!companyName || !positionName)) {
-        const posting = await db.get(
-          `
+	mcpServer.registerTool(
+		'get_applicant_context',
+		{
+			description: 'Read applicantee information and MCP settings used by the apply agent.',
+		},
+		async () => {
+			const personalInformation = await getPersonalInformation();
+			const mcpSettings = await getMcpSettings();
+			ensureMcpAgentEnabled(mcpSettings);
+			const runbook = {
+				summary:
+					'Use existing browser/web tools to apply through each posting URL, using applicant data for form fields and MCP login credentials for account/MFA flows.',
+				steps: [
+					'Load context and candidate postings.',
+					'Open posting URL in browser automation.',
+					'Fill application form with applicant data.',
+					'Use agent login email + password for account creation and sign-in when required.',
+					'Use the same agent login email for MFA/approval flows when required.',
+					'Generate and attach a posting-specific cover letter.',
+					'Call record_application_result after submit.',
+				],
+			};
+			return asToolResult({
+				personal_information: personalInformation,
+				mcp_settings: mcpSettings,
+				runbook,
+			});
+		},
+	);
+
+	mcpServer.registerTool(
+		'find_posting_candidates',
+		{
+			description:
+				'Find postings that match MCP preferences using search + industry/location/remote filters with like-parts industry matching.',
+			inputSchema: {
+				search: z.string().optional(),
+				ats: z
+					.union([z.enum(MCP_ATS_FILTER_VALUES), z.array(z.enum(MCP_ATS_FILTER_VALUES))])
+					.optional(),
+				industries: z.array(z.string()).optional(),
+				states: z.array(z.string()).optional(),
+				counties: z.array(z.string()).optional(),
+				remote: z.enum(['all', 'remote', 'hybrid', 'non_remote']).optional(),
+				include_applied: z.boolean().optional(),
+				limit: z.number().int().positive().max(2000).optional(),
+			},
+		},
+		async (args) => {
+			const result = await findCandidates(args || {});
+			return asToolResult(result);
+		},
+	);
+
+	mcpServer.registerTool(
+		'draft_cover_letter',
+		{
+			description: 'Generate a cover letter draft for a posting using applicantee information.',
+			inputSchema: {
+				company_name: z.string().optional(),
+				position_name: z.string().optional(),
+				job_posting_url: z.string().optional(),
+				instructions: z.string().optional(),
+			},
+		},
+		async (args) => {
+			const mcpSettings = await getMcpSettings();
+			ensureMcpAgentEnabled(mcpSettings);
+			const personalInformation = await getPersonalInformation();
+			let companyName = String(args?.company_name || '').trim();
+			let positionName = String(args?.position_name || '').trim();
+			const jobPostingUrl = String(args?.job_posting_url || '').trim();
+
+			if (jobPostingUrl && (!companyName || !positionName)) {
+				const posting = await db.get(
+					`
             SELECT company_name, position_name
             FROM Postings
             WHERE job_posting_url = ?
             LIMIT 1;
           `,
-          [jobPostingUrl]
-        );
-        companyName = companyName || String(posting?.company_name || "").trim();
-        positionName = positionName || String(posting?.position_name || "").trim();
-      }
+					[jobPostingUrl],
+				);
+				companyName = companyName || String(posting?.company_name || '').trim();
+				positionName = positionName || String(posting?.position_name || '').trim();
+			}
 
-      const draft = buildCoverLetterDraft(
-        personalInformation,
-        {
-          company_name: companyName,
-          position_name: positionName,
-          job_posting_url: jobPostingUrl
-        },
-        args?.instructions
-      );
+			const draft = buildCoverLetterDraft(
+				personalInformation,
+				{
+					company_name: companyName,
+					position_name: positionName,
+					job_posting_url: jobPostingUrl,
+				},
+				args?.instructions,
+			);
 
-      return asToolResult({
-        posting: {
-          company_name: companyName,
-          position_name: positionName,
-          job_posting_url: jobPostingUrl
-        },
-        draft
-      });
-    }
-  );
+			return asToolResult({
+				posting: {
+					company_name: companyName,
+					position_name: positionName,
+					job_posting_url: jobPostingUrl,
+				},
+				draft,
+			});
+		},
+	);
 
-  mcpServer.registerTool(
-    "record_application_result",
-    {
-      description:
-        "Write a completed agent-driven application result into applications and posting application state tables.",
-      inputSchema: {
-        job_posting_url: z.string(),
-        company_name: z.string().optional(),
-        position_name: z.string().optional(),
-        status: z.string().optional(),
-        application_date: z.number().int().nonnegative().optional(),
-        agent_name: z.string().optional(),
-        commit: z.boolean().optional(),
-        approved_by_user: z.boolean().optional()
-      }
-    },
-    async (args) => {
-      const mcpSettings = await getMcpSettings();
-      ensureMcpAgentEnabled(mcpSettings);
-      const commit = normalizeBoolean(args?.commit, false);
-      const approvedByUser = normalizeBoolean(args?.approved_by_user, false);
-      const jobPostingUrl = String(args?.job_posting_url || "").trim();
-      const agentName =
-        String(args?.agent_name || mcpSettings.preferred_agent_name || MCP_SETTINGS_DEFAULTS.preferred_agent_name)
-          .trim() || MCP_SETTINGS_DEFAULTS.preferred_agent_name;
+	mcpServer.registerTool(
+		'ignore_posting',
+		{
+			description: 'Mark a posting as ignored or restore it for future candidate searches.',
+			inputSchema: {
+				job_posting_url: z.string(),
+				ignored: z.boolean().optional(),
+				ignored_at_epoch: z.number().int().nonnegative().optional(),
+				ignored_by_label: z.string().optional(),
+			},
+		},
+		async (args) => {
+			const mcpSettings = await getMcpSettings();
+			ensureMcpAgentEnabled(mcpSettings);
+			return asToolResult(await setPostingIgnoredStateForAgent(args || {}));
+		},
+	);
 
-      if (!jobPostingUrl) {
-        throw new Error("job_posting_url is required.");
-      }
+	mcpServer.registerTool(
+		'record_application_result',
+		{
+			description:
+				'Write a completed agent-driven application result into applications and posting application state tables.',
+			inputSchema: {
+				job_posting_url: z.string(),
+				company_name: z.string().optional(),
+				position_name: z.string().optional(),
+				status: z.string().optional(),
+				application_date: z.number().int().nonnegative().optional(),
+				agent_name: z.string().optional(),
+				commit: z.boolean().optional(),
+				approved_by_user: z.boolean().optional(),
+			},
+		},
+		async (args) => {
+			const mcpSettings = await getMcpSettings();
+			ensureMcpAgentEnabled(mcpSettings);
+			const commit = normalizeBoolean(args?.commit, false);
+			const approvedByUser = normalizeBoolean(args?.approved_by_user, false);
+			const jobPostingUrl = String(args?.job_posting_url || '').trim();
+			const agentName =
+				String(
+					args?.agent_name ||
+						mcpSettings.preferred_agent_name ||
+						MCP_SETTINGS_DEFAULTS.preferred_agent_name,
+				).trim() || MCP_SETTINGS_DEFAULTS.preferred_agent_name;
 
-      const posting = await db.get(
-        `
+			if (!jobPostingUrl) {
+				throw new Error('job_posting_url is required.');
+			}
+
+			const posting = await db.get(
+				`
           SELECT company_name, position_name
           FROM Postings
           WHERE job_posting_url = ?
           LIMIT 1;
         `,
-        [jobPostingUrl]
-      );
+				[jobPostingUrl],
+			);
 
-      const companyName = String(args?.company_name || posting?.company_name || "").trim();
-      const positionName = String(args?.position_name || posting?.position_name || "").trim();
-      const status = String(args?.status || "applied").trim().toLowerCase() || "applied";
-      const applicationDate = parseNonNegativeInteger(args?.application_date) || nowEpochSeconds();
-      const appliedByLabel = `${agentName} applied on behalf of user`;
+			const companyName = String(args?.company_name || posting?.company_name || '').trim();
+			const positionName = String(args?.position_name || posting?.position_name || '').trim();
+			const status =
+				String(args?.status || 'applied')
+					.trim()
+					.toLowerCase() || 'applied';
+			const applicationDate = parseNonNegativeInteger(args?.application_date) || nowEpochSeconds();
+			const appliedByLabel = `${agentName} applied on behalf of user`;
 
-      if (!companyName || !positionName) {
-        throw new Error("company_name and position_name are required (or must be resolvable from job_posting_url).");
-      }
+			if (!companyName || !positionName) {
+				throw new Error(
+					'company_name and position_name are required (or must be resolvable from job_posting_url).',
+				);
+			}
 
-      if (!commit || mcpSettings.dry_run_only) {
-        return asToolResult({
-          committed: false,
-          dry_run: true,
-          reason: mcpSettings.dry_run_only ? "MCP settings are currently dry_run_only=true." : "commit=false",
-          payload: {
-            company_name: companyName,
-            position_name: positionName,
-            job_posting_url: jobPostingUrl,
-            status,
-            application_date: applicationDate,
-            applied_by_label: appliedByLabel
-          }
-        });
-      }
+			if (!commit || mcpSettings.dry_run_only) {
+				return asToolResult({
+					committed: false,
+					dry_run: true,
+					reason: mcpSettings.dry_run_only
+						? 'MCP settings are currently dry_run_only=true.'
+						: 'commit=false',
+					payload: {
+						company_name: companyName,
+						position_name: positionName,
+						job_posting_url: jobPostingUrl,
+						status,
+						application_date: applicationDate,
+						applied_by_label: appliedByLabel,
+					},
+				});
+			}
 
-      if (mcpSettings.require_final_approval && !approvedByUser) {
-        throw new Error("Final approval is required. Set approved_by_user=true to commit.");
-      }
+			if (mcpSettings.require_final_approval && !approvedByUser) {
+				throw new Error('Final approval is required. Set approved_by_user=true to commit.');
+			}
 
-      const application = await createApplicationFromAgent({
-        company_name: companyName,
-        position_name: positionName,
-        job_posting_url: jobPostingUrl,
-        status,
-        application_date: applicationDate,
-        applied_by_label: appliedByLabel
-      });
+			const application = await createApplicationFromAgent({
+				company_name: companyName,
+				position_name: positionName,
+				job_posting_url: jobPostingUrl,
+				status,
+				application_date: applicationDate,
+				applied_by_label: appliedByLabel,
+			});
 
-      return asToolResult({
-        committed: true,
-        application
-      });
-    }
-  );
+			return asToolResult({
+				committed: true,
+				application,
+			});
+		},
+	);
 
-  const transport = new StdioServerTransport();
-  await mcpServer.connect(transport);
+	return mcpServer;
+}
+
+function timingSafeEqualStrings(a, b) {
+	const digestA = crypto.createHash('sha256').update(String(a)).digest();
+	const digestB = crypto.createHash('sha256').update(String(b)).digest();
+	return crypto.timingSafeEqual(digestA, digestB);
+}
+
+function requireMcpAuth(req, res, next) {
+	const [scheme, token] = String(req.headers.authorization || '').split(' ');
+	if (scheme === 'Bearer' && token && timingSafeEqualStrings(token, MCP_AUTH_TOKEN)) {
+		next();
+		return;
+	}
+	res.status(401).set('WWW-Authenticate', 'Bearer').json({
+		jsonrpc: '2.0',
+		error: { code: -32001, message: 'Unauthorized' },
+		id: null,
+	});
+}
+
+async function main() {
+	if (!MCP_AUTH_TOKEN) {
+		// Fail closed: this endpoint reads applicant PII and can submit job
+		// applications, so it must never come up reachable without a token.
+		throw new Error(
+			'MCP_AUTH_TOKEN environment variable is required (holds PII / can submit applications).',
+		);
+	}
+
+	await openDatabase();
+
+	// Stateless mode (sessionIdGenerator: undefined): a fresh McpServer +
+	// transport per request, no session tracking. Simplest correct setup for
+	// a single-user tool with no server-initiated push messages today.
+	const app = createMcpExpressApp({ host: MCP_HOST });
+	app.use('/mcp', requireMcpAuth);
+
+	app.post('/mcp', async (req, res) => {
+		const mcpServer = buildMcpServer();
+		try {
+			const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+			await mcpServer.connect(transport);
+			await transport.handleRequest(req, res, req.body);
+			res.on('close', () => {
+				transport.close();
+				mcpServer.close();
+			});
+		} catch (error) {
+			console.error('[openpostings-apply-agent] MCP request failed:', error);
+			if (!res.headersSent) {
+				res.status(500).json({
+					jsonrpc: '2.0',
+					error: { code: -32603, message: 'Internal server error' },
+					id: null,
+				});
+			}
+		}
+	});
+
+	app.get('/mcp', (_req, res) => {
+		res.status(405).json({
+			jsonrpc: '2.0',
+			error: { code: -32000, message: 'Method not allowed.' },
+			id: null,
+		});
+	});
+	app.delete('/mcp', (_req, res) => {
+		res.status(405).json({
+			jsonrpc: '2.0',
+			error: { code: -32000, message: 'Method not allowed.' },
+			id: null,
+		});
+	});
+
+	app.listen(MCP_PORT, MCP_HOST, () => {
+		console.log(`[openpostings-apply-agent] MCP server listening on http://${MCP_HOST}:${MCP_PORT}/mcp`);
+	});
 }
 
 main().catch((error) => {
-  console.error("[openpostings-apply-agent] MCP server failed:", error);
-  process.exit(1);
+	console.error('[openpostings-apply-agent] MCP server failed:', error);
+	process.exit(1);
 });

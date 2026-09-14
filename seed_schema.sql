@@ -62,6 +62,7 @@ CREATE TABLE IF NOT EXISTS Postings (
       pay_currency TEXT,
       pay_period TEXT,
       pay_raw TEXT,
+      location TEXT,
       first_seen_epoch INTEGER,
       last_seen_epoch INTEGER,
       hidden INTEGER NOT NULL DEFAULT 0,

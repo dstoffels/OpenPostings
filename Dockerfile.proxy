@@ -1,0 +1,26 @@
+# syntax=docker/dockerfile:1
+
+# Builds the static Expo web bundle, then serves it (and reverse-proxies the
+# API) from a single Caddy container. Caddy does double duty here: static
+# file host for the web app, reverse proxy for everything else.
+
+FROM node:22-bookworm-slim AS web-build
+WORKDIR /app
+ENV CI=1
+
+COPY package.json package-lock.json ./
+COPY patches ./patches
+RUN npm ci
+
+COPY app.json babel.config.js metro.config.js jsconfig.json ./
+COPY src ./src
+COPY App.js logo.png favicon.png ./
+
+# Baked in at build time: the browser bundle talks to the API same-origin,
+# under /api — Caddyfile below strips that prefix before proxying to `api`.
+ENV EXPO_PUBLIC_API_BASE_URL=/api
+RUN npx expo export --platform web --output-dir dist
+
+FROM caddy:2-alpine
+COPY Caddyfile /etc/caddy/Caddyfile
+COPY --from=web-build /app/dist /srv/web

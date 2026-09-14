@@ -3,6 +3,7 @@ jobs.db
 jobs.db-wal
 jobs.db-shm
 logs/
+data/
 # React Native
 ios/
 *.keystore

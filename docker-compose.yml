@@ -10,16 +10,15 @@ services:
       - "8787"
     environment:
       - PORT=8787
-    # jobs.db is checked into the repo, so a fresh clone already has it at
-    # the project root — bind-mounted here in place (not copied) so the
-    # container reads/writes the same file your normal `npm run server`
-    # would. Don't run both at the same time; two processes writing the
-    # same SQLite file will fight each other.
+      - DB_PATH=/app/data/jobs.db
+    # A directory bind mount (not per-file) so a fresh clone — where jobs.db
+    # doesn't exist yet, by design — doesn't hit Docker's "create an empty
+    # directory when the bind source is missing" gotcha. The app creates
+    # jobs.db (+ -wal/-shm) and logs/ inside ./data on first run. Don't run
+    # this alongside a native `npm run server`; both would fight over the
+    # same SQLite file.
     volumes:
-      - ./jobs.db:/app/jobs.db
-      - ./jobs.db-wal:/app/jobs.db-wal
-      - ./jobs.db-shm:/app/jobs.db-shm
-      - ./logs:/app/logs
+      - ./data:/app/data
 
   mcp:
     build: .
@@ -41,11 +40,10 @@ services:
       # PII and can submit job applications). Set it in a .env file next to
       # this compose file; there's no default.
       - MCP_AUTH_TOKEN=${MCP_AUTH_TOKEN:?Set MCP_AUTH_TOKEN in a .env file before starting}
+      - DB_PATH=/app/data/jobs.db
+    # Same directory-mount rationale as `api` — shares the same jobs.db.
     volumes:
-      - ./jobs.db:/app/jobs.db
-      - ./jobs.db-wal:/app/jobs.db-wal
-      - ./jobs.db-shm:/app/jobs.db-shm
-      - ./logs:/app/logs
+      - ./data:/app/data
 
   proxy:
     build:

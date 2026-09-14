@@ -30,6 +30,7 @@ ENV NODE_ENV=production
 COPY --from=deps /app/node_modules ./node_modules
 COPY package.json ./
 COPY server ./server
+COPY seed ./seed
 
 EXPOSE 8787
 CMD ["node", "server/index.js"]

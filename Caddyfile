@@ -1,0 +1,19 @@
+# SITE_ADDRESS comes from docker-compose.yml (defaults to plain HTTP on :80
+# for local testing). In production set SITE_ADDRESS=your-domain.com in a
+# .env file next to docker-compose.yml — Caddy will provision Let's Encrypt
+# certs and serve HTTPS automatically.
+{$SITE_ADDRESS} {
+	handle_path /api/* {
+		reverse_proxy api:8787
+	}
+
+	handle /mcp* {
+		reverse_proxy mcp:8788
+	}
+
+	handle {
+		root * /srv/web
+		try_files {path} /index.html
+		file_server
+	}
+}

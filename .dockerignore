@@ -1,0 +1,26 @@
+node_modules
+.git
+.expo
+.github
+
+# SQLite data — bind-mounted at runtime, never baked into the image
+jobs.db
+jobs.db-wal
+jobs.db-shm
+logs
+
+# Mobile / desktop app targets, not part of the backend image
+android
+ios
+macos
+windows
+docs-site
+chrome-extension
+nodejs-assets
+
+# Build output / docs, not needed as build input for either image
+dist
+README-Images
+*.msi
+
+npm-debug.log*

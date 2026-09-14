@@ -1760,7 +1760,7 @@ async function findCandidates(options = {}) {
 
 	const rows = await db.all(
 		`
-      SELECT id, company_name, position_name, job_posting_url, posting_date, location
+      SELECT id, company_name, position_name, job_posting_url, posting_date, location, job_description
       FROM Postings
       ORDER BY company_name ASC, position_name ASC;
     `,

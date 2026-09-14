@@ -1740,7 +1740,10 @@ async function findCandidates(options = {}) {
 			? options.counties
 			: settings.preferred_counties || [];
 	const remote = options.remote ? normalizeRemoteFilter(options.remote) : settings.preferred_remote;
-	const countries = settings.preferred_countries || [];
+	const countries =
+		Array.isArray(options.countries) && options.countries.length > 0
+			? options.countries
+			: settings.preferred_countries || [];
 	const search = String(options.search || settings.preferred_search || '')
 		.trim()
 		.toLowerCase();
@@ -2188,6 +2191,7 @@ function buildMcpServer() {
 					.union([z.enum(MCP_ATS_FILTER_VALUES), z.array(z.enum(MCP_ATS_FILTER_VALUES))])
 					.optional(),
 				industries: z.array(z.string()).optional(),
+				countries: z.array(z.string()).optional(),
 				states: z.array(z.string()).optional(),
 				counties: z.array(z.string()).optional(),
 				remote: z.enum(['all', 'remote', 'hybrid', 'non_remote']).optional(),

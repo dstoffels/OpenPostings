@@ -21,6 +21,8 @@ async function getMcpSettings() {
         preferred_search,
         preferred_remote,
         preferred_industries,
+        preferred_regions,
+        preferred_countries,
         preferred_states,
         preferred_counties,
         instructions_for_agent

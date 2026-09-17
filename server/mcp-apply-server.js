@@ -1762,6 +1762,7 @@ async function findCandidates(options = {}) {
 		`
       SELECT id, company_name, position_name, job_posting_url, posting_date, location, job_description
       FROM Postings
+      WHERE COALESCE(hidden, 0) = 0
       ORDER BY company_name ASC, position_name ASC;
     `,
 	);
